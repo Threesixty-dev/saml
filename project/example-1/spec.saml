@@ -1,3 +1,8 @@
+
+meta Scope {
+
+}
+
 meta Event {
 
 }
@@ -12,7 +17,7 @@ meta Entity {
 }
 
 meta Action {
-  parameter:initiator {
+  initiator {
     type: Entity
   }
 }
@@ -21,7 +26,23 @@ meta Data {
 
 }
 
+
+meta WorkflowStage {
+  
+}
+
 meta Workflow {
-  initiator { }
+  initiator { 
+    type:Action
+  }
+  stage {
+    type:WorkflowStage
+  }
+}
+
+
+
+
+meta Queue {
 
 }

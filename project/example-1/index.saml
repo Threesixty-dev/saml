@@ -1,22 +1,77 @@
 
 
 
-entity User {
+scope Identity entity User {
 
 }
 
 
 
-event Payment {
+  workflowStage CommonStage {
 
-}
+  }
+
+  workflowStage SpecialStage {
+
+  }
 
 
-action ArticlePublication {
+
+scope Article action ArticlePublication {
   initiator:User
 }
 
 
-workflow ArticlePublication {
+
+scope Article {
+
+  entity Author {
+
+  }
+
+
+  event Evaluated {
+
+  }
+
+  workflowStage Evaluation extends CommonStage SpecialStage {
+    context: Author
+    finisher: Evaluated
+  }
+
+
+  workflowStage Publication extends CommonStage {
+
+  }
+
+
+  workflow ArticlePublication {
+    initiator: ArticlePublication from: ArticlePublicationQueue
+    stage: Evaluation
+    stage: Publication after Evaluation
+  }
+
+  queue ArticlePublicationQueue uses RabbitMQ {
+
+  }
+}
+
+
+
+
+
+technical queue RabbitMQ {
+
+}
+
+
+
+// [EXAMPLE] Composition example
+
+event entity action Dupa {
+
+}
+
+scope Article action ArticlePublication {
 
 }
