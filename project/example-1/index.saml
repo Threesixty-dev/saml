@@ -1,0 +1,22 @@
+
+
+
+entity User {
+
+}
+
+
+
+event Payment {
+
+}
+
+
+action ArticlePublication {
+  initiator:User
+}
+
+
+workflow ArticlePublication {
+
+}

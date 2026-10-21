@@ -1,0 +1,41 @@
+specification {
+    element probe
+    element evaluator
+    element alarm
+    element archive
+    relationship signal
+    relationship telemetry
+}
+
+model {
+    probe = probe 'Temperature probe' {
+        metadata {
+            site 'edge'
+        }
+    }
+    evaluator = evaluator 'Threshold evaluator' {
+        metadata {
+            site 'edge'
+        }
+    }
+    alarm = alarm 'Local alarm' {
+        metadata {
+            site 'edge'
+        }
+    }
+    history = archive 'Telemetry history' {
+        metadata {
+            site 'cloud'
+        }
+    }
+
+    probe -[signal]-> evaluator 'Temperature sample'
+    evaluator -[signal]-> alarm 'Sound alarm'
+    evaluator -[telemetry]-> history 'Publish independently of alarming'
+}
+
+views {
+    view responsibilities {
+        include *
+    }
+}

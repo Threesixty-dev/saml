@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<model xmlns="http://www.opengroup.org/xsd/archimate/3.0/"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       identifier="id-cold-storage">
+  <name xml:lang="en">Cold storage monitoring</name>
+  <documentation xml:lang="en">Review the impact of moving alarm evaluation to the cloud.</documentation>
+  <elements>
+    <element identifier="id-stock" xsi:type="Goal">
+      <name xml:lang="en">Protect stored stock from temperature excursions</name>
+    </element>
+    <element identifier="id-offline" xsi:type="Requirement">
+      <name xml:lang="en">R1: Local alarming operates during WAN loss</name>
+    </element>
+    <element identifier="id-deadline" xsi:type="Requirement">
+      <name xml:lang="en">R2: Alarm response is at most 100 ms</name>
+    </element>
+    <element identifier="id-locality" xsi:type="Constraint">
+      <name xml:lang="en">Critical alarm processing stays at the edge site</name>
+    </element>
+    <element identifier="id-operator" xsi:type="BusinessRole">
+      <name xml:lang="en">Cold-store operator</name>
+    </element>
+    <element identifier="id-response" xsi:type="BusinessProcess">
+      <name xml:lang="en">Respond to a temperature alarm</name>
+    </element>
+    <element identifier="id-monitor" xsi:type="ApplicationComponent">
+      <name xml:lang="en">Edge monitor</name>
+    </element>
+    <element identifier="id-history" xsi:type="ApplicationComponent">
+      <name xml:lang="en">Cloud telemetry history</name>
+    </element>
+    <element identifier="id-evaluate" xsi:type="ApplicationFunction">
+      <name xml:lang="en">Evaluate samples and trigger the alarm</name>
+    </element>
+    <element identifier="id-alarming" xsi:type="ApplicationService">
+      <name xml:lang="en">Local alarming</name>
+    </element>
+    <element identifier="id-binary" xsi:type="Artifact">
+      <name xml:lang="en">Monitor executable</name>
+    </element>
+    <element identifier="id-edge" xsi:type="Device">
+      <name xml:lang="en">Edge gateway</name>
+    </element>
+  </elements>
+  <relationships>
+    <relationship identifier="id-r1" source="id-offline" target="id-stock" xsi:type="Realization"/>
+    <relationship identifier="id-r2" source="id-deadline" target="id-stock" xsi:type="Realization"/>
+    <relationship identifier="id-r3" source="id-operator" target="id-response" xsi:type="Assignment"/>
+    <relationship identifier="id-r4" source="id-monitor" target="id-evaluate" xsi:type="Assignment"/>
+    <relationship identifier="id-r5" source="id-evaluate" target="id-alarming" xsi:type="Realization"/>
+    <relationship identifier="id-r6" source="id-alarming" target="id-response" xsi:type="Serving"/>
+    <relationship identifier="id-r7" source="id-alarming" target="id-offline" xsi:type="Realization"/>
+    <relationship identifier="id-r8" source="id-alarming" target="id-deadline" xsi:type="Realization"/>
+    <relationship identifier="id-r9" source="id-locality" target="id-monitor" xsi:type="Association"/>
+    <relationship identifier="id-r10" source="id-binary" target="id-monitor" xsi:type="Realization"/>
+    <relationship identifier="id-r11" source="id-edge" target="id-binary" xsi:type="Assignment"/>
+    <relationship identifier="id-r12" source="id-monitor" target="id-history" xsi:type="Flow">
+      <name xml:lang="en">Publish telemetry independently of alarming</name>
+    </relationship>
+  </relationships>
+</model>

@@ -1,0 +1,54 @@
+Family ColdStorage = {
+    Component Type LocalStage = {
+        Port input;
+        Port output;
+        Property site : string;
+        Property worstCaseMs : int;
+        rule staysLocal = invariant self.site == "edge";
+    };
+
+    Component Type TelemetryArchive = {
+        Port input;
+        Property site : string;
+    };
+
+    Connector Type Channel = {
+        Role producer;
+        Role consumer;
+    };
+};
+
+System ColdRoom : ColdStorage = new ColdStorage extended with {
+    Component probe : LocalStage = new LocalStage extended with {
+        Property site = "edge";
+        Property worstCaseMs = 10;
+    };
+    Component evaluator : LocalStage = new LocalStage extended with {
+        Property site = "edge";
+        Property worstCaseMs = 20;
+    };
+    Component alarm : LocalStage = new LocalStage extended with {
+        Property site = "edge";
+        Property worstCaseMs = 10;
+    };
+    Component history : TelemetryArchive = new TelemetryArchive extended with {
+        Property site = "cloud";
+    };
+
+    Connector sample : Channel = new Channel;
+    Connector trigger : Channel = new Channel;
+    Connector telemetry : Channel = new Channel;
+
+    Attachments {
+        probe.output to sample.producer;
+        evaluator.input to sample.consumer;
+        evaluator.output to trigger.producer;
+        alarm.input to trigger.consumer;
+        evaluator.output to telemetry.producer;
+        history.input to telemetry.consumer;
+    };
+
+    // The two local links contribute a combined upper bound of 4 ms.
+    rule latencyBudget = invariant
+        probe.worstCaseMs + evaluator.worstCaseMs + alarm.worstCaseMs + 4 <= 100;
+};

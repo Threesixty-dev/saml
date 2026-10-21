@@ -1,0 +1,27 @@
+meta Event {
+
+}
+
+meta Entity {
+  capabilities {
+    
+  }
+  relationship {
+
+  }
+}
+
+meta Action {
+  parameter:initiator {
+    type: Entity
+  }
+}
+
+meta Data {
+
+}
+
+meta Workflow {
+  initiator { }
+
+}

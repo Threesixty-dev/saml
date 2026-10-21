@@ -1,0 +1,61 @@
+package Cold_Storage
+public
+    device Temperature_Probe
+        features
+            sample: out event data port;
+        flows
+            acquisition: flow source sample {
+                Latency => 5 ms .. 10 ms;
+            };
+    end Temperature_Probe;
+
+    system Threshold_Evaluator
+        features
+            sample: in event data port;
+            trigger: out event data port;
+            telemetry: out event data port;
+        flows
+            evaluate: flow path sample -> trigger {
+                Latency => 10 ms .. 20 ms;
+            };
+    end Threshold_Evaluator;
+
+    device Local_Alarm
+        features
+            trigger: in event data port;
+        flows
+            sound: flow sink trigger {
+                Latency => 5 ms .. 10 ms;
+            };
+    end Local_Alarm;
+
+    system Telemetry_History
+        features
+            telemetry: in event data port;
+    end Telemetry_History;
+
+    system Monitor
+    end Monitor;
+
+    system implementation Monitor.local
+        subcomponents
+            probe: device Temperature_Probe;
+            evaluator: system Threshold_Evaluator;
+            alarm: device Local_Alarm;
+            history: system Telemetry_History;
+        connections
+            sample_link: port probe.sample -> evaluator.sample {
+                Latency => 1 ms .. 2 ms;
+            };
+            alarm_link: port evaluator.trigger -> alarm.trigger {
+                Latency => 1 ms .. 2 ms;
+            };
+            telemetry_link: port evaluator.telemetry -> history.telemetry;
+        flows
+            sample_to_alarm: end to end flow
+                probe.acquisition -> sample_link -> evaluator.evaluate ->
+                alarm_link -> alarm.sound {
+                    Latency => 0 ms .. 100 ms;
+                };
+    end Monitor.local;
+end Cold_Storage;
