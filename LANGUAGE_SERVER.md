@@ -24,24 +24,36 @@ maintain a list of user-defined words. The `samlVocabulary` token falls back to
 the theme's `support.function` color, keeping it visually separate from model
 names that use `entity.name.type`.
 
+`meta Entity` and `boundry Entity` give the same `entity` word two compatible
+roles: a thing and a boundary. Hover shows both roles, and go to definition
+includes both declarations.
+
 The server supports full-document synchronization, diagnostics, document
 symbols, go to definition, hover, and completion. Definitions are found across
 all `.saml` and `.spec` files in the workspace, including open unsaved buffers.
 If a name has several declarations, go to definition returns all of them.
 
-The current diagnostics cover unmatched `{}`, `[]`, `()`, and unterminated quoted
-strings. This intentionally accepts constructs whose semantics are not yet
-specified. Declaration recognition uses the workspace vocabulary, including
-`state: Name` lines when `State` is introduced by a spec. A chain such as
-`layer Infrastructure scope Article {}` is represented as a `scope Article`
+The reusable Rust semantic analyzer is in `src/semantic.rs`. It composes spec
+roles, creates a workspace object map, resolves typed references and `extends`
+links, and returns semantic findings to the LSP. Run
+`cargo run --bin saml-map -- project/example-1` to inspect its JSON output.
+The custom LSP request `saml/semanticMap` returns the same map for open buffers.
+See `SEMANTIC_MODEL.md` for the current model and resolution rules.
+
+Diagnostics cover unmatched `{}`, `[]`, `()`, unterminated quoted strings, and
+the semantic findings described above. Other constructs whose semantics are not
+yet specified are accepted. Declaration recognition uses the workspace
+vocabulary, including `state: Name` lines when `State` is introduced by a spec.
+A chain such as `layer Infrastructure scope Article {}` is represented as a `scope Article`
 symbol when `Scope` is defined. The preceding `layer` is a qualifier.
 
 ## Rules still needed
 
 The example does not determine a complete grammar or type system. In particular:
 
-- Are declarations with the same name extensions of one concept, overloads, or
-  errors? `ArticlePublication` and `Article` appear in several roles.
+- When model declarations repeat a name and role, are they extensions of one
+  concept, overloads, or errors? `ArticlePublication` and `Article` recur in
+  the example.
 - How do `scope`, `layer`, and `application` affect visibility and reference
   lookup within the workspace?
 - Which attributes and relations are legal for each declaration, and which are
@@ -52,8 +64,9 @@ The example does not determine a complete grammar or type system. In particular:
 - Are names case-sensitive? `UserPortalFrontEnd` in `infrastructure.saml` differs
   from `UserPortalFrontend` in `applications.saml`.
 
-Until these are settled, the server avoids unresolved-name, duplicate-name, and
-type errors. Navigation matches exact names and can therefore return several
-possible definitions.
+The semantic analyzer checks references whose target kind is declared in a
+spec field rule or an `extends` clause. It does not yet validate unrestricted
+prose relations, duplicate model declarations, or access across boundaries.
+Navigation still matches exact names and can return several definitions.
 
 Run the tests with `cargo test`.

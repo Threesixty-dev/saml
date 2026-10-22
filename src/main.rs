@@ -1,11 +1,11 @@
-mod model;
-
-use model::{Document, Vocabulary, VocabularyKind, RESTRICTED_KEYWORDS};
+use saml_lsp::model::{Document, Vocabulary, VocabularyKind, RESTRICTED_KEYWORDS};
+use saml_lsp::semantic::{analyze, Severity};
+use saml_lsp::workspace::{collect_sources, uri_to_path};
 use serde_json::{json, Value};
 use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::io::{self, BufRead, BufReader, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 struct Server<R: BufRead, W: Write> {
     reader: R,
@@ -120,7 +120,7 @@ impl<R: BufRead, W: Write> Server<R, W> {
                                    "tokenModifiers": ["declaration"]},
                         "full": true
                     }
-                }, "serverInfo": {"name": "saml-lsp", "version": "0.2.1"}})))
+                }, "serverInfo": {"name": "saml-lsp", "version": "0.3.0"}})))
             }
             "shutdown" => Ok(Some(Value::Null)),
             "exit" => {
@@ -154,9 +154,11 @@ impl<R: BufRead, W: Write> Server<R, W> {
                 if let Some(uri) = params["textDocument"]["uri"].as_str() {
                     self.open.remove(uri);
                     self.publish(uri, &[])?;
+                    self.refresh_diagnostics()?;
                 }
                 Ok(Some(Value::Null))
             }
+            "saml/semanticMap" => Ok(Some(json!(analyze(&self.workspace_sources())))),
             "textDocument/documentSymbol" => {
                 let result = params["textDocument"]["uri"]
                     .as_str()
@@ -205,24 +207,24 @@ impl<R: BufRead, W: Write> Server<R, W> {
                     return Ok(Some(Value::Null));
                 };
                 let vocabulary = Vocabulary::from_sources(&self.workspace_sources());
-                let mut descriptions: BTreeSet<String> = vocabulary
-                    .entries
-                    .get(&name)
-                    .into_iter()
-                    .flatten()
-                    .map(|entry| {
-                        format!(
-                            "{} vocabulary `{}` (from `{}`)",
-                            if entry.kind == VocabularyKind::Boundary {
-                                "boundary"
-                            } else {
-                                "meta"
-                            },
-                            name,
-                            entry.name
-                        )
-                    })
-                    .collect();
+                let mut descriptions = BTreeSet::new();
+                if let Some(entries) = vocabulary.entries.get(&name) {
+                    let mut roles = Vec::new();
+                    if entries
+                        .iter()
+                        .any(|entry| entry.kind == VocabularyKind::Meta)
+                    {
+                        roles.push("meta thing");
+                    }
+                    if entries
+                        .iter()
+                        .any(|entry| entry.kind == VocabularyKind::Boundary)
+                    {
+                        roles.push("boundary");
+                    }
+                    descriptions
+                        .insert(format!("spec vocabulary `{name}`: {}", roles.join(" and ")));
+                }
                 if RESTRICTED_KEYWORDS.contains(&name.as_str()) {
                     descriptions.insert(format!("built-in keyword `{name}`"));
                 }
@@ -276,8 +278,38 @@ impl<R: BufRead, W: Write> Server<R, W> {
         sources.insert(uri.into(), text.into());
         let vocabulary = Vocabulary::from_sources(&sources);
         let document = Document::with_vocabulary(uri.into(), text.into(), &vocabulary);
-        self.publish(uri, &document.diagnostics)?;
         self.open.insert(uri.into(), document);
+        self.refresh_diagnostics()
+    }
+
+    fn refresh_diagnostics(&mut self) -> io::Result<()> {
+        let sources = self.workspace_sources();
+        let vocabulary = Vocabulary::from_sources(&sources);
+        let map = analyze(&sources);
+        let documents: Vec<Document> = self
+            .open
+            .iter()
+            .map(|(uri, document)| {
+                Document::with_vocabulary(uri.clone(), document.text().into(), &vocabulary)
+            })
+            .collect();
+        for document in documents {
+            let mut diagnostics = document.diagnostics.clone();
+            for finding in map
+                .findings
+                .iter()
+                .filter(|finding| finding.source.uri == document.uri)
+            {
+                diagnostics.push(json!({
+                    "range": document.range(finding.source.start, finding.source.end),
+                    "severity": if finding.severity == Severity::Error { 1 } else { 2 },
+                    "source": "saml semantic",
+                    "code": finding.code,
+                    "message": finding.message,
+                }));
+            }
+            self.publish(&document.uri, &diagnostics)?;
+        }
         Ok(())
     }
 
@@ -329,69 +361,6 @@ impl<R: BufRead, W: Write> Server<R, W> {
     }
 }
 
-fn collect_sources(root: &Path, sources: &mut HashMap<String, String>) {
-    let Ok(entries) = fs::read_dir(root) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-        if name.starts_with('.') || matches!(name.as_ref(), "node_modules" | "target" | "venv") {
-            continue;
-        }
-        let Ok(file_type) = entry.file_type() else {
-            continue;
-        };
-        if file_type.is_dir() {
-            collect_sources(&path, sources);
-        } else if file_type.is_file()
-            && path
-                .extension()
-                .is_some_and(|ext| ext == "saml" || ext == "spec")
-        {
-            let uri = path_to_uri(&path);
-            if let Ok(text) = fs::read_to_string(&path) {
-                sources.insert(uri, text);
-            }
-        }
-    }
-}
-
-fn uri_to_path(uri: &str) -> Option<PathBuf> {
-    let rest = uri.strip_prefix("file://")?;
-    let rest = rest.strip_prefix("localhost").unwrap_or(rest);
-    if !rest.starts_with('/') {
-        return None;
-    }
-    let bytes = rest.as_bytes();
-    let mut result = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index] == b'%' && index + 2 < bytes.len() {
-            let value = u8::from_str_radix(&rest[index + 1..index + 3], 16).ok()?;
-            result.push(value);
-            index += 3;
-        } else {
-            result.push(bytes[index]);
-            index += 1;
-        }
-    }
-    String::from_utf8(result).ok().map(PathBuf::from)
-}
-
-fn path_to_uri(path: &Path) -> String {
-    let mut result = String::from("file://");
-    for byte in path.to_string_lossy().bytes() {
-        if byte.is_ascii_alphanumeric() || b"/-._~".contains(&byte) {
-            result.push(byte as char);
-        } else {
-            result.push_str(&format!("%{byte:02X}"));
-        }
-    }
-    result
-}
-
 fn main() -> io::Result<()> {
     let stdin = io::stdin();
     let stdout = io::stdout();
@@ -401,7 +370,9 @@ fn main() -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use saml_lsp::workspace::path_to_uri;
     use std::io::Cursor;
+    use std::path::Path;
 
     #[test]
     fn example_is_structurally_valid() {
@@ -560,25 +531,66 @@ mod tests {
     }
 
     #[test]
-    fn vocabulary_definition_resolves_to_manifest() {
+    fn entity_composes_meta_and_boundary_roles() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("project/example-1");
         let uri = path_to_uri(&root.join("articles.saml"));
         let manifest_uri = path_to_uri(&root.join("spec.saml"));
         let mut server = Server::new(BufReader::new(Cursor::new(Vec::new())), Vec::new());
         server.roots.push(root);
+        let target = json!({
+            "textDocument": {"uri": uri},
+            "position": {"line": 37, "character": 3}
+        });
         let locations = server
-            .dispatch(
-                "textDocument/definition",
-                &json!({
-                    "textDocument": {"uri": uri},
-                    "position": {"line": 37, "character": 3}
-                }),
-            )
+            .dispatch("textDocument/definition", &target)
             .unwrap()
             .unwrap();
         assert_eq!(locations.as_array().unwrap().len(), 2);
         assert!(locations.as_array().unwrap().iter().any(|location| {
             location["uri"] == manifest_uri && location["range"]["start"]["line"] == 27
         }));
+        assert!(locations.as_array().unwrap().iter().any(|location| {
+            location["uri"] == manifest_uri && location["range"]["start"]["line"] == 12
+        }));
+        let hover = server
+            .dispatch("textDocument/hover", &target)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            hover["contents"]["value"],
+            "spec vocabulary `entity`: meta thing and boundary"
+        );
+    }
+
+    #[test]
+    fn opening_a_spec_refreshes_model_semantic_diagnostics() {
+        let mut server = Server::new(BufReader::new(Cursor::new(Vec::new())), Vec::new());
+        server
+            .dispatch(
+                "textDocument/didOpen",
+                &json!({"textDocument": {
+                    "uri": "file:///model.saml", "text": "entity Item {}"
+                }}),
+            )
+            .unwrap();
+        assert!(String::from_utf8_lossy(&server.writer).contains("unknown-vocabulary"));
+        server.writer.clear();
+        server
+            .dispatch(
+                "textDocument/didOpen",
+                &json!({"textDocument": {
+                    "uri": "file:///model.spec", "text": "meta Entity {}"
+                }}),
+            )
+            .unwrap();
+        let messages = String::from_utf8_lossy(&server.writer);
+        assert!(messages.contains("file:///model.saml"));
+        assert!(!messages.contains("unknown-vocabulary"));
+        let map = server
+            .dispatch("saml/semanticMap", &Value::Null)
+            .unwrap()
+            .unwrap();
+        assert_eq!(map["concepts"][0]["word"], "entity");
+        assert_eq!(map["objects"][0]["name"], "Item");
     }
 }

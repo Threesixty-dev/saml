@@ -12,7 +12,6 @@ pub enum VocabularyKind {
 #[derive(Clone)]
 pub struct VocabularyEntry {
     pub kind: VocabularyKind,
-    pub name: String,
     pub uri: String,
     pub start: usize,
     pub end: usize,
@@ -46,7 +45,6 @@ impl Vocabulary {
                     .or_default()
                     .push(VocabularyEntry {
                         kind,
-                        name: declaration.name,
                         uri: uri.clone(),
                         start: declaration.name_start,
                         end: declaration.name_end,
@@ -79,18 +77,18 @@ impl Vocabulary {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum TokenKind {
+pub(crate) enum TokenKind {
     Identifier,
     Punctuation,
     String,
 }
 
 #[derive(Clone)]
-struct Token {
-    value: String,
-    start: usize,
-    end: usize,
-    kind: TokenKind,
+pub(crate) struct Token {
+    pub value: String,
+    pub start: usize,
+    pub end: usize,
+    pub kind: TokenKind,
 }
 
 #[derive(Clone)]
@@ -101,7 +99,9 @@ pub struct Declaration {
     pub end: usize,
     pub name_start: usize,
     pub name_end: usize,
-    parent: Option<usize>,
+    pub(crate) parent: Option<usize>,
+    pub(crate) header_start: usize,
+    pub(crate) header_end: usize,
 }
 
 #[derive(Clone)]
@@ -143,6 +143,10 @@ impl Document {
 
     pub fn text(&self) -> &str {
         &self.text
+    }
+
+    pub(crate) fn tokens(&self) -> &[Token] {
+        &self.tokens
     }
 
     pub fn position(&self, offset: usize) -> Value {
@@ -366,6 +370,8 @@ impl Document {
                     name_start: name.start,
                     name_end: name.end,
                     parent: blocks.iter().rev().find_map(|item| *item),
+                    header_start: token.start,
+                    header_end: name.end,
                 });
             }
             if token.kind != TokenKind::Punctuation {
@@ -429,8 +435,9 @@ impl Document {
                 let name = &self.tokens[window[1]];
                 (keyword.kind == TokenKind::Identifier
                     && name.kind == TokenKind::Identifier
-                    && self.vocabulary.kind_for(&keyword.value).is_some()
-                    && self.vocabulary.kind_for(&name.value).is_none())
+                    && keyword.value.chars().next().is_some_and(char::is_lowercase)
+                    && !matches!(keyword.value.as_str(), "extends" | "uses" | "via")
+                    && name.value.chars().next().is_some_and(char::is_uppercase))
                 .then_some((keyword, name))
             })
             .next_back()?;
@@ -443,6 +450,8 @@ impl Document {
             name_start: pair.1.start,
             name_end: pair.1.end,
             parent: blocks.iter().rev().find_map(|item| *item),
+            header_start: self.tokens[segment[0]].start,
+            header_end: end - 1,
         });
         Some(index)
     }

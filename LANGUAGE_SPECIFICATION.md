@@ -29,3 +29,11 @@ rule
 2. SPEC manifest
 
 Spec serves as pieces declaration
+
+`meta` describes a thing. `boundry` marks a boundary. These roles compose for
+the same name: `meta Entity` and `boundry Entity` describe one `entity`
+vocabulary word that is both a thing and a boundary.
+
+Using a vocabulary word with a name creates an object of that kind, for
+example `entity User` creates a `User` object from `meta Entity`. `extends`
+describes a separate relationship between objects.
