@@ -6,15 +6,24 @@ boundry Scope {
 }
 // maybe instead of declaration, this should be a keyword,
 // because it is a technical boundry declaration.
-boundry Interface {
+boundry Application {
 
 }
+// Boundry allows to use access operators: Public/Private
+boundry Entity {}
 
-meta Application
+
+boundry Layer {}
+
+
+meta Application {
+
+}
 
 meta Event {
 
 }
+
 
 meta Entity {
   capabilities {
@@ -25,7 +34,8 @@ meta Entity {
   }
 }
 
-
+// maybe rule should be a keyword, instead of just part of a spec model
+// rules are crosslayer concern
 meta Rule {
 
 }

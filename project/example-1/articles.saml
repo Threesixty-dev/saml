@@ -22,8 +22,18 @@ scope Article action ArticlePublication {
 }
 
 
+layer Business scope Article {
+  rule ArticleLettersNumberIsHigherThan { }
+}
 
-scope Article {
+
+layer Infrastructure scope Article {
+  data Article { }
+  data Author { }
+}
+
+
+layer [Business, Application] scope Article {
 
   entity Author {
 
@@ -32,8 +42,6 @@ scope Article {
   entity Article {
 
   }
-
-  rule ArticleLettersNumberIsHigherThan { }
 
   workflowStage Evaluation extends CommonStage SpecialStage {
     context: [Author, Article];
@@ -66,27 +74,10 @@ scope Article {
   }
 }
 
-technical queue RabbitMQ {
-
-}
-
-
-
-
-
-
-
-
-
 
 
 
 // [EXAMPLE] Composition example
 
-event entity action Dupa {
-
-}
-
-scope Article action ArticlePublication {
-
-}
+event entity action Dupa { }
+scope Article action ArticlePublication { }

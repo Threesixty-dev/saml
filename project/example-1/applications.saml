@@ -1,3 +1,40 @@
-interface Browser application UserPortal {
+interface RestApi { }
 
+
+technology AngularSPA { }
+
+technology Express { }
+
+environment Browser { }
+
+environment Server { }
+
+
+applicationType SinglePageApplication {
+  environment: Browser
+  technology: AngularSPA
+}
+
+layer Infrastructure applicationCapability RestApi {
+  expose: {
+    type: Data
+  }
+}
+
+
+applicationType ApiService {
+  environment: Server
+  technology: Express
+}
+
+
+application UserPortalBackend {
+  type: ApiService 
+  capability: RestApi {
+    expose: [Article, Author]
+  }
+}
+
+application UserPortalFrontend {
+  type: SinglePageApplication
 }

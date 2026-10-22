@@ -1,0 +1,6 @@
+
+
+layer Infrastructure {
+  UserPortalFrontEnd consumes UserPortalBackend via RestApi
+  UserPortalFrontEnd authenticates
+}
