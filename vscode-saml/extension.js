@@ -2,6 +2,8 @@ const vscode = require('vscode');
 const cp = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const isSaml = document => document.languageId === 'saml' || document.languageId === 'saml-spec';
+const isManifest = document => document.uri.path.endsWith('.spec') || document.uri.path.endsWith('/spec.saml');
 
 function asPosition(value) {
   return new vscode.Position(value.line, value.character);
@@ -108,9 +110,10 @@ async function activate(context) {
 
   const output = vscode.window.createOutputChannel('SAML Language Server');
   const diagnostics = vscode.languages.createDiagnosticCollection('saml');
+  const semanticChanges = new vscode.EventEmitter();
   const process = cp.spawn(binary, [], { cwd: folder.uri.fsPath, stdio: 'pipe' });
   const client = new Client(process, output, diagnostics);
-  context.subscriptions.push(output, diagnostics, { dispose: () => process.kill() });
+  context.subscriptions.push(output, diagnostics, semanticChanges, { dispose: () => process.kill() });
 
   try {
     await client.request('initialize', {
@@ -119,7 +122,10 @@ async function activate(context) {
       workspaceFolders: vscode.workspace.workspaceFolders.map(item => ({
         uri: item.uri.toString(), name: item.name
       })),
-      capabilities: {}
+      capabilities: { textDocument: { semanticTokens: {
+        requests: { full: true }, tokenTypes: ['keyword', 'samlVocabulary'],
+        tokenModifiers: ['declaration'], formats: ['relative']
+      } } }
     });
     client.notify('initialized', {});
   } catch (error) {
@@ -127,29 +133,35 @@ async function activate(context) {
     return;
   }
 
-  const selector = { language: 'saml', scheme: 'file' };
+  const selector = [
+    { language: 'saml', scheme: 'file' },
+    { language: 'saml-spec', scheme: 'file' }
+  ];
   const open = document => {
-    if (document.languageId === 'saml') {
+    if (isSaml(document)) {
       client.notify('textDocument/didOpen', { textDocument: {
-        uri: document.uri.toString(), languageId: 'saml', version: document.version,
+        uri: document.uri.toString(), languageId: document.languageId, version: document.version,
         text: document.getText()
       }});
+      if (isManifest(document)) semanticChanges.fire();
     }
   };
   for (const document of vscode.workspace.textDocuments) open(document);
   context.subscriptions.push(
     vscode.workspace.onDidOpenTextDocument(open),
     vscode.workspace.onDidChangeTextDocument(event => {
-      if (event.document.languageId === 'saml') {
+      if (isSaml(event.document)) {
         client.notify('textDocument/didChange', {
           textDocument: { uri: event.document.uri.toString(), version: event.document.version },
           contentChanges: [{ text: event.document.getText() }]
         });
+        if (isManifest(event.document)) semanticChanges.fire();
       }
     }),
     vscode.workspace.onDidCloseTextDocument(document => {
-      if (document.languageId === 'saml') {
+      if (isSaml(document)) {
         client.notify('textDocument/didClose', { textDocument: { uri: document.uri.toString() } });
+        if (isManifest(document)) semanticChanges.fire();
       }
     }),
     vscode.languages.registerDocumentSymbolProvider(selector, {
@@ -189,7 +201,16 @@ async function activate(context) {
         });
         return items.map(item => new vscode.CompletionItem(item.label, item.kind - 1));
       }
-    })
+    }),
+    vscode.languages.registerDocumentSemanticTokensProvider(selector, {
+      onDidChangeSemanticTokens: semanticChanges.event,
+      async provideDocumentSemanticTokens(document) {
+        const result = await client.request('textDocument/semanticTokens/full', {
+          textDocument: { uri: document.uri.toString() }
+        });
+        return new vscode.SemanticTokens(Uint32Array.from(result.data));
+      }
+    }, new vscode.SemanticTokensLegend(['keyword', 'samlVocabulary'], ['declaration']))
   );
   output.appendLine(`SAML server running: ${binary}`);
 }

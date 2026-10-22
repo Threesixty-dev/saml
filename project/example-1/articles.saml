@@ -35,13 +35,9 @@ layer Infrastructure scope Article {
 
 layer [Business, Application] scope Article {
 
-  entity Author {
+  entity Author { }
 
-  }
-
-  entity Article {
-
-  }
+  entity Article { }
 
   workflowStage Evaluation extends CommonStage SpecialStage {
     context: [Author, Article];

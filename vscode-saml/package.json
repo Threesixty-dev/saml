@@ -3,17 +3,29 @@
   "displayName": "SAML",
   "description": "Editor support for the SAML modeling language",
   "publisher": "local",
-  "version": "0.1.1",
+  "version": "0.2.1",
   "engines": { "vscode": "^1.100.0" },
   "main": "./extension.js",
-  "activationEvents": ["onLanguage:saml"],
+  "activationEvents": ["onLanguage:saml", "onLanguage:saml-spec"],
   "contributes": {
     "languages": [
-      { "id": "saml", "aliases": ["SAML"], "extensions": [".saml"] }
+      { "id": "saml", "aliases": ["SAML"], "extensions": [".saml"] },
+      { "id": "saml-spec", "aliases": ["SAML Spec"], "extensions": [".spec"] }
     ],
     "grammars": [
-      { "language": "saml", "scopeName": "source.saml", "path": "./syntaxes/saml.tmLanguage.json" }
+      { "language": "saml", "scopeName": "source.saml", "path": "./syntaxes/saml.tmLanguage.json" },
+      { "language": "saml-spec", "scopeName": "source.saml", "path": "./syntaxes/saml.tmLanguage.json" }
     ],
+    "semanticTokenTypes": [
+      { "id": "samlVocabulary", "description": "A word introduced by a SAML spec manifest" }
+    ],
+    "semanticTokenScopes": [
+      { "scopes": { "samlVocabulary": ["support.function.saml"] } }
+    ],
+    "configurationDefaults": {
+      "[saml]": { "editor.semanticHighlighting.enabled": true },
+      "[saml-spec]": { "editor.semanticHighlighting.enabled": true }
+    },
     "configuration": {
       "title": "SAML",
       "properties": {

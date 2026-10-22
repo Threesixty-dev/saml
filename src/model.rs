@@ -1,56 +1,80 @@
 use serde_json::{json, Value};
+use std::collections::{BTreeMap, HashMap};
 
-pub const KEYWORDS: &[&str] = &[
-    "action",
-    "after",
-    "application",
-    "applicationCapability",
-    "applicationType",
-    "authenticates",
-    "boundry",
-    "capability",
-    "consumes",
-    "context",
-    "data",
-    "emit",
-    "entity",
-    "environment",
-    "event",
-    "expose",
-    "extends",
-    "from",
-    "initiator",
-    "interface",
-    "is",
-    "layer",
-    "meta",
-    "queue",
-    "respected",
-    "rule",
-    "scope",
-    "stage",
-    "state",
-    "technology",
-    "then",
-    "type",
-    "uses",
-    "via",
-    "when",
-    "workflow",
-    "workflowStage",
-];
+pub const RESTRICTED_KEYWORDS: &[&str] = &["boundry", "meta", "rule"];
 
-fn symbol_kind(keyword: &str) -> Option<u32> {
-    match keyword {
-        "layer" | "scope" => Some(3),
-        "boundry" | "meta" | "technology" | "environment" | "applicationType" | "entity"
-        | "workflowStage" | "data" => Some(5),
-        "interface" | "applicationCapability" => Some(11),
-        "action" | "workflow" | "rule" => Some(12),
-        "application" | "queue" => Some(19),
-        "state" => Some(22),
-        "event" => Some(24),
-        _ => None,
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum VocabularyKind {
+    Boundary,
+    Meta,
+}
+
+#[derive(Clone)]
+pub struct VocabularyEntry {
+    pub kind: VocabularyKind,
+    pub name: String,
+    pub uri: String,
+    pub start: usize,
+    pub end: usize,
+}
+
+#[derive(Clone, Default)]
+pub struct Vocabulary {
+    pub entries: BTreeMap<String, Vec<VocabularyEntry>>,
+}
+
+impl Vocabulary {
+    pub fn from_sources(sources: &HashMap<String, String>) -> Self {
+        let mut vocabulary = Self::default();
+        for (uri, text) in sources {
+            if !uri.ends_with(".spec") && !uri.ends_with("/spec.saml") {
+                continue;
+            }
+            let document = Document::new(uri.clone(), text.clone());
+            for declaration in document.declarations {
+                let kind = match declaration.kind.as_str() {
+                    "boundry" => VocabularyKind::Boundary,
+                    "meta" => VocabularyKind::Meta,
+                    _ => continue,
+                };
+                let mut chars = declaration.name.chars();
+                let Some(first) = chars.next() else { continue };
+                let word = first.to_lowercase().collect::<String>() + chars.as_str();
+                vocabulary
+                    .entries
+                    .entry(word)
+                    .or_default()
+                    .push(VocabularyEntry {
+                        kind,
+                        name: declaration.name,
+                        uri: uri.clone(),
+                        start: declaration.name_start,
+                        end: declaration.name_end,
+                    });
+            }
+        }
+        for entries in vocabulary.entries.values_mut() {
+            entries
+                .sort_by(|left, right| left.uri.cmp(&right.uri).then(left.start.cmp(&right.start)));
+        }
+        vocabulary
+    }
+
+    pub fn kind_for(&self, word: &str) -> Option<u32> {
+        match word {
+            "boundry" | "meta" => Some(5),
+            "rule" => Some(12),
+            _ => self.entries.get(word).map(|entries| {
+                if entries
+                    .iter()
+                    .all(|entry| entry.kind == VocabularyKind::Boundary)
+                {
+                    3
+                } else {
+                    5
+                }
+            }),
+        }
     }
 }
 
@@ -88,10 +112,15 @@ pub struct Document {
     tokens: Vec<Token>,
     pub declarations: Vec<Declaration>,
     pub diagnostics: Vec<Value>,
+    vocabulary: Vocabulary,
 }
 
 impl Document {
     pub fn new(uri: String, text: String) -> Self {
+        Self::with_vocabulary(uri, text, &Vocabulary::default())
+    }
+
+    pub fn with_vocabulary(uri: String, text: String, vocabulary: &Vocabulary) -> Self {
         let mut line_starts = vec![0];
         for (index, byte) in text.bytes().enumerate() {
             if byte == b'\n' {
@@ -105,10 +134,15 @@ impl Document {
             tokens: Vec::new(),
             declarations: Vec::new(),
             diagnostics: Vec::new(),
+            vocabulary: vocabulary.clone(),
         };
         document.scan();
         document.parse_structure();
         document
+    }
+
+    pub fn text(&self) -> &str {
+        &self.text
     }
 
     pub fn position(&self, offset: usize) -> Value {
@@ -164,6 +198,42 @@ impl Document {
             .collect()
     }
 
+    pub fn semantic_tokens(&self) -> Vec<u32> {
+        let mut data = Vec::new();
+        let (mut previous_line, mut previous_character) = (0, 0);
+        for token in &self.tokens {
+            if token.kind != TokenKind::Identifier {
+                continue;
+            }
+            let (token_type, modifiers) = if RESTRICTED_KEYWORDS.contains(&token.value.as_str()) {
+                (0, 0)
+            } else if self.declarations.iter().any(|declaration| {
+                declaration.name_start == token.start
+                    && declaration.name_end == token.end
+                    && matches!(declaration.kind.as_str(), "boundry" | "meta")
+            }) {
+                (1, 1)
+            } else if self.vocabulary.entries.contains_key(&token.value) {
+                (1, 0)
+            } else {
+                continue;
+            };
+            let position = self.position(token.start);
+            let line = position["line"].as_u64().unwrap() as u32;
+            let character = position["character"].as_u64().unwrap() as u32;
+            let start = if line == previous_line {
+                character - previous_character
+            } else {
+                character
+            };
+            let length = token.value.encode_utf16().count() as u32;
+            data.extend([line - previous_line, start, length, token_type, modifiers]);
+            previous_line = line;
+            previous_character = character;
+        }
+        data
+    }
+
     fn symbol(&self, index: usize) -> Value {
         let declaration = &self.declarations[index];
         let children: Vec<Value> = self
@@ -176,7 +246,7 @@ impl Document {
         json!({
             "name": declaration.name,
             "detail": declaration.kind,
-            "kind": symbol_kind(&declaration.kind).unwrap_or(1),
+            "kind": self.vocabulary.kind_for(&declaration.kind).unwrap_or(1),
             "range": self.range(declaration.start, declaration.end),
             "selectionRange": self.range(declaration.name_start, declaration.name_end),
             "children": children,
@@ -275,7 +345,8 @@ impl Document {
         let mut segment: Vec<usize> = Vec::new();
         for index in 0..self.tokens.len() {
             let token = self.tokens[index].clone();
-            if token.kind == TokenKind::Identifier
+            if self.vocabulary.entries.contains_key("state")
+                && token.kind == TokenKind::Identifier
                 && token.value == "state"
                 && self
                     .tokens
@@ -358,8 +429,8 @@ impl Document {
                 let name = &self.tokens[window[1]];
                 (keyword.kind == TokenKind::Identifier
                     && name.kind == TokenKind::Identifier
-                    && symbol_kind(&keyword.value).is_some()
-                    && symbol_kind(&name.value).is_none())
+                    && self.vocabulary.kind_for(&keyword.value).is_some()
+                    && self.vocabulary.kind_for(&name.value).is_none())
                 .then_some((keyword, name))
             })
             .next_back()?;

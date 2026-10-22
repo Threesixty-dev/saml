@@ -34,7 +34,7 @@ dependencies = [
 
 [[package]]
 name = "saml-lsp"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "serde_json",
 ]

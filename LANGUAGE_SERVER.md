@@ -9,22 +9,32 @@ cargo test
 
 The server binary is `target/debug/saml-lsp`. It uses standard LSP messages on
 stdin and stdout. The `vscode-saml` extension starts it automatically for
-`*.saml` files when this repository is open in VS Code. Its TextMate grammar
-colors comments, strings, declaration and control keywords, properties, named
-types, and punctuation. Set `saml.serverPath` in VS Code if the binary lives
-elsewhere.
+`*.saml` and `*.spec` files when this repository is open in VS Code. Set
+`saml.serverPath` in VS Code if the binary lives elsewhere.
+
+Only `boundry`, `meta`, and `rule` are built-in keywords. A `.spec` file can
+introduce vocabulary with declarations such as `meta Entity {}` and
+`boundry Scope {}`. These become `entity` and `scope` in model files. Vocabulary
+is workspace-wide: every `.spec` in the open workspace contributes words to all
+model files in that workspace, regardless of directory. For the existing example,
+`spec.saml` is also read as a manifest. VS Code gives built-in keywords and
+spec-defined vocabulary distinct semantic token categories. The static grammar
+colors comments, strings, properties, names, and punctuation; it does not
+maintain a list of user-defined words. The `samlVocabulary` token falls back to
+the theme's `support.function` color, keeping it visually separate from model
+names that use `entity.name.type`.
 
 The server supports full-document synchronization, diagnostics, document
 symbols, go to definition, hover, and completion. Definitions are found across
-all `.saml` files in the workspace, including open unsaved buffers. If a name
-has several declarations, go to definition returns all of them.
+all `.saml` and `.spec` files in the workspace, including open unsaved buffers.
+If a name has several declarations, go to definition returns all of them.
 
 The current diagnostics cover unmatched `{}`, `[]`, `()`, and unterminated quoted
 strings. This intentionally accepts constructs whose semantics are not yet
-specified. Declaration recognition follows the block forms in
-`project/example-1`, including `state: Name` lines. A chain such as
+specified. Declaration recognition uses the workspace vocabulary, including
+`state: Name` lines when `State` is introduced by a spec. A chain such as
 `layer Infrastructure scope Article {}` is represented as a `scope Article`
-symbol. The preceding `layer` is a qualifier.
+symbol when `Scope` is defined. The preceding `layer` is a qualifier.
 
 ## Rules still needed
 
@@ -33,13 +43,12 @@ The example does not determine a complete grammar or type system. In particular:
 - Are declarations with the same name extensions of one concept, overloads, or
   errors? `ArticlePublication` and `Article` appear in several roles.
 - How do `scope`, `layer`, and `application` affect visibility and reference
-  lookup across files?
+  lookup within the workspace?
 - Which attributes and relations are legal for each declaration, and which are
   mandatory? The example uses both `from: Initial` and `from Initial`.
 - Are semicolons optional everywhere, and are multi-line declarations always
   allowed?
-- Is `boundry` the intended keyword spelling? The example itself questions
-  whether this should be a keyword at all.
+- Is `boundry` the final spelling of the restricted keyword?
 - Are names case-sensitive? `UserPortalFrontEnd` in `infrastructure.saml` differs
   from `UserPortalFrontend` in `applications.saml`.
 

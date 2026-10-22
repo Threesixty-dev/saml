@@ -1,6 +1,6 @@
 mod model;
 
-use model::{Document, KEYWORDS};
+use model::{Document, Vocabulary, VocabularyKind, RESTRICTED_KEYWORDS};
 use serde_json::{json, Value};
 use std::collections::{BTreeSet, HashMap};
 use std::fs;
@@ -114,8 +114,13 @@ impl<R: BufRead, W: Write> Server<R, W> {
                     "documentSymbolProvider": true,
                     "definitionProvider": true,
                     "hoverProvider": true,
-                    "completionProvider": {}
-                }, "serverInfo": {"name": "saml-lsp", "version": "0.1.0"}})))
+                    "completionProvider": {},
+                    "semanticTokensProvider": {
+                        "legend": {"tokenTypes": ["keyword", "samlVocabulary"],
+                                   "tokenModifiers": ["declaration"]},
+                        "full": true
+                    }
+                }, "serverInfo": {"name": "saml-lsp", "version": "0.2.1"}})))
             }
             "shutdown" => Ok(Some(Value::Null)),
             "exit" => {
@@ -160,11 +165,30 @@ impl<R: BufRead, W: Write> Server<R, W> {
                     .unwrap_or_default();
                 Ok(Some(json!(result)))
             }
+            "textDocument/semanticTokens/full" => {
+                let data = params["textDocument"]["uri"]
+                    .as_str()
+                    .and_then(|uri| self.document(uri))
+                    .map(|document| document.semantic_tokens())
+                    .unwrap_or_default();
+                Ok(Some(json!({"data": data})))
+            }
             "textDocument/definition" => {
                 let Some(name) = self.target_name(params) else {
                     return Ok(Some(json!([])));
                 };
                 let mut locations = Vec::new();
+                let sources = self.workspace_sources();
+                let vocabulary = Vocabulary::from_sources(&sources);
+                if let Some(entries) = vocabulary.entries.get(&name) {
+                    for entry in entries {
+                        if let Some(text) = sources.get(&entry.uri) {
+                            let document = Document::new(entry.uri.clone(), text.clone());
+                            locations.push(json!({"uri": entry.uri,
+                                "range": document.range(entry.start, entry.end)}));
+                        }
+                    }
+                }
                 for document in self.workspace_documents() {
                     for declaration in &document.declarations {
                         if declaration.name == name {
@@ -180,13 +204,35 @@ impl<R: BufRead, W: Write> Server<R, W> {
                 let Some(name) = self.target_name(params) else {
                     return Ok(Some(Value::Null));
                 };
-                let descriptions: BTreeSet<String> = self
-                    .workspace_documents()
-                    .iter()
-                    .flat_map(|document| &document.declarations)
-                    .filter(|declaration| declaration.name == name)
-                    .map(|declaration| format!("{} `{}`", declaration.kind, declaration.name))
+                let vocabulary = Vocabulary::from_sources(&self.workspace_sources());
+                let mut descriptions: BTreeSet<String> = vocabulary
+                    .entries
+                    .get(&name)
+                    .into_iter()
+                    .flatten()
+                    .map(|entry| {
+                        format!(
+                            "{} vocabulary `{}` (from `{}`)",
+                            if entry.kind == VocabularyKind::Boundary {
+                                "boundary"
+                            } else {
+                                "meta"
+                            },
+                            name,
+                            entry.name
+                        )
+                    })
                     .collect();
+                if RESTRICTED_KEYWORDS.contains(&name.as_str()) {
+                    descriptions.insert(format!("built-in keyword `{name}`"));
+                }
+                descriptions.extend(
+                    self.workspace_documents()
+                        .iter()
+                        .flat_map(|document| &document.declarations)
+                        .filter(|declaration| declaration.name == name)
+                        .map(|declaration| format!("{} `{}`", declaration.kind, declaration.name)),
+                );
                 if descriptions.is_empty() {
                     Ok(Some(Value::Null))
                 } else {
@@ -195,10 +241,17 @@ impl<R: BufRead, W: Write> Server<R, W> {
                 }
             }
             "textDocument/completion" => {
-                let mut items: Vec<Value> = KEYWORDS
+                let mut items: Vec<Value> = RESTRICTED_KEYWORDS
                     .iter()
                     .map(|keyword| json!({"label": keyword, "kind": 14}))
                     .collect();
+                let vocabulary = Vocabulary::from_sources(&self.workspace_sources());
+                for (word, entries) in &vocabulary.entries {
+                    if !RESTRICTED_KEYWORDS.contains(&word.as_str()) {
+                        items.push(json!({"label": word,
+                            "kind": if entries.iter().all(|entry| entry.kind == VocabularyKind::Boundary) { 9 } else { 7 }}));
+                    }
+                }
                 let names: BTreeSet<String> = self
                     .workspace_documents()
                     .iter()
@@ -206,7 +259,9 @@ impl<R: BufRead, W: Write> Server<R, W> {
                     .map(|declaration| declaration.name.clone())
                     .collect();
                 for name in names {
-                    if !KEYWORDS.contains(&name.as_str()) {
+                    if !RESTRICTED_KEYWORDS.contains(&name.as_str())
+                        && !vocabulary.entries.contains_key(&name)
+                    {
                         items.push(json!({"label": name, "kind": 6}));
                     }
                 }
@@ -217,7 +272,10 @@ impl<R: BufRead, W: Write> Server<R, W> {
     }
 
     fn update(&mut self, uri: &str, text: &str) -> io::Result<()> {
-        let document = Document::new(uri.into(), text.into());
+        let mut sources = self.workspace_sources();
+        sources.insert(uri.into(), text.into());
+        let vocabulary = Vocabulary::from_sources(&sources);
+        let document = Document::with_vocabulary(uri.into(), text.into(), &vocabulary);
         self.publish(uri, &document.diagnostics)?;
         self.open.insert(uri.into(), document);
         Ok(())
@@ -231,11 +289,13 @@ impl<R: BufRead, W: Write> Server<R, W> {
     }
 
     fn document(&self, uri: &str) -> Option<Document> {
-        if let Some(document) = self.open.get(uri) {
-            return Some(document.clone());
-        }
-        let path = uri_to_path(uri)?;
-        Some(Document::new(uri.into(), fs::read_to_string(path).ok()?))
+        let sources = self.workspace_sources();
+        let vocabulary = Vocabulary::from_sources(&sources);
+        let text = sources.get(uri).cloned().or_else(|| {
+            let path = uri_to_path(uri)?;
+            fs::read_to_string(path).ok()
+        })?;
+        Some(Document::with_vocabulary(uri.into(), text, &vocabulary))
     }
 
     fn target_name(&self, params: &Value) -> Option<String> {
@@ -247,17 +307,29 @@ impl<R: BufRead, W: Write> Server<R, W> {
     }
 
     fn workspace_documents(&self) -> Vec<Document> {
-        let mut documents: HashMap<String, Document> = self.open.clone();
-        for root in &self.roots {
-            collect_documents(root, &mut documents);
-        }
-        let mut result: Vec<Document> = documents.into_values().collect();
+        let sources = self.workspace_sources();
+        let vocabulary = Vocabulary::from_sources(&sources);
+        let mut result: Vec<Document> = sources
+            .into_iter()
+            .map(|(uri, text)| Document::with_vocabulary(uri, text, &vocabulary))
+            .collect();
         result.sort_by(|left, right| left.uri.cmp(&right.uri));
         result
     }
+
+    fn workspace_sources(&self) -> HashMap<String, String> {
+        let mut sources = HashMap::new();
+        for root in &self.roots {
+            collect_sources(root, &mut sources);
+        }
+        for (uri, document) in &self.open {
+            sources.insert(uri.clone(), document.text().into());
+        }
+        sources
+    }
 }
 
-fn collect_documents(root: &Path, documents: &mut HashMap<String, Document>) {
+fn collect_sources(root: &Path, sources: &mut HashMap<String, String>) {
     let Ok(entries) = fs::read_dir(root) else {
         return;
     };
@@ -272,13 +344,15 @@ fn collect_documents(root: &Path, documents: &mut HashMap<String, Document>) {
             continue;
         };
         if file_type.is_dir() {
-            collect_documents(&path, documents);
-        } else if file_type.is_file() && path.extension().is_some_and(|ext| ext == "saml") {
+            collect_sources(&path, sources);
+        } else if file_type.is_file()
+            && path
+                .extension()
+                .is_some_and(|ext| ext == "saml" || ext == "spec")
+        {
             let uri = path_to_uri(&path);
-            if !documents.contains_key(&uri) {
-                if let Ok(text) = fs::read_to_string(&path) {
-                    documents.insert(uri.clone(), Document::new(uri, text));
-                }
+            if let Ok(text) = fs::read_to_string(&path) {
+                sources.insert(uri, text);
             }
         }
     }
@@ -332,14 +406,19 @@ mod tests {
     #[test]
     fn example_is_structurally_valid() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("project/example-1");
-        let mut documents = HashMap::new();
-        collect_documents(&root, &mut documents);
-        assert_eq!(documents.len(), 6);
+        let mut sources = HashMap::new();
+        collect_sources(&root, &mut sources);
+        assert_eq!(sources.len(), 6);
+        let vocabulary = Vocabulary::from_sources(&sources);
+        let documents: Vec<Document> = sources
+            .into_iter()
+            .map(|(uri, text)| Document::with_vocabulary(uri, text, &vocabulary))
+            .collect();
         assert!(documents
-            .values()
+            .iter()
             .all(|document| document.diagnostics.is_empty()));
         assert!(documents
-            .values()
+            .iter()
             .flat_map(|document| &document.declarations)
             .any(|declaration| declaration.kind == "state" && declaration.name == "Successful"));
     }
@@ -380,6 +459,14 @@ mod tests {
             .dispatch(
                 "textDocument/didOpen",
                 &json!({"textDocument": {
+                    "uri": "file:///model.spec", "text": "meta Entity {}"
+                }}),
+            )
+            .unwrap();
+        server
+            .dispatch(
+                "textDocument/didOpen",
+                &json!({"textDocument": {
                     "uri": "file:///draft.saml", "text": "entity Draft {}"
                 }}),
             )
@@ -407,9 +494,76 @@ mod tests {
     }
 
     #[test]
-    fn definition_resolves_across_example_files() {
+    fn spec_edits_change_vocabulary_and_semantic_tokens() {
+        let mut server = Server::new(BufReader::new(Cursor::new(Vec::new())), Vec::new());
+        server
+            .dispatch(
+                "textDocument/didOpen",
+                &json!({"textDocument": {
+                    "uri": "file:///model.spec", "text": "boundry Scope {}\nmeta Entity {}"
+                }}),
+            )
+            .unwrap();
+        server
+            .dispatch(
+                "textDocument/didOpen",
+                &json!({"textDocument": {
+                    "uri": "file:///model.saml", "text": "scope Sample { entity Item {} }"
+                }}),
+            )
+            .unwrap();
+        let params = json!({"textDocument": {"uri": "file:///model.saml"}});
+        let symbols = server
+            .dispatch("textDocument/documentSymbol", &params)
+            .unwrap()
+            .unwrap();
+        assert_eq!(symbols[0]["name"], "Sample");
+        assert_eq!(symbols[0]["children"][0]["name"], "Item");
+        let tokens = server
+            .dispatch("textDocument/semanticTokens/full", &params)
+            .unwrap()
+            .unwrap();
+        let types: Vec<u64> = tokens["data"]
+            .as_array()
+            .unwrap()
+            .chunks(5)
+            .map(|chunk| chunk[3].as_u64().unwrap())
+            .collect();
+        assert_eq!(types, vec![1, 1]);
+        server
+            .dispatch(
+                "textDocument/didChange",
+                &json!({
+                    "textDocument": {"uri": "file:///model.spec"},
+                    "contentChanges": [{"text": "boundry Scope {}\nmeta Other {}"}]
+                }),
+            )
+            .unwrap();
+        let tokens = server
+            .dispatch("textDocument/semanticTokens/full", &params)
+            .unwrap()
+            .unwrap();
+        assert_eq!(tokens["data"].as_array().unwrap().len(), 5);
+    }
+
+    #[test]
+    fn manifest_marks_reserved_word_and_declared_name_separately() {
+        let uri = "file:///model.spec".to_string();
+        let text = "meta Entity {}".to_string();
+        let sources = HashMap::from([(uri.clone(), text.clone())]);
+        let vocabulary = Vocabulary::from_sources(&sources);
+        let document = Document::with_vocabulary(uri, text, &vocabulary);
+        let data = document.semantic_tokens();
+        assert_eq!(data.len(), 10);
+        assert_eq!(data[3..5], [0, 0]);
+        assert_eq!(data[8..10], [1, 1]);
+    }
+
+    #[test]
+    fn vocabulary_definition_resolves_to_manifest() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("project/example-1");
-        let uri = path_to_uri(&root.join("applications.saml"));
+        let uri = path_to_uri(&root.join("articles.saml"));
+        let manifest_uri = path_to_uri(&root.join("spec.saml"));
         let mut server = Server::new(BufReader::new(Cursor::new(Vec::new())), Vec::new());
         server.roots.push(root);
         let locations = server
@@ -417,12 +571,14 @@ mod tests {
                 "textDocument/definition",
                 &json!({
                     "textDocument": {"uri": uri},
-                    "position": {"line": 14, "character": 16}
+                    "position": {"line": 37, "character": 3}
                 }),
             )
             .unwrap()
             .unwrap();
-        assert_eq!(locations.as_array().unwrap().len(), 1);
-        assert_eq!(locations[0]["range"]["start"]["line"], 3);
+        assert_eq!(locations.as_array().unwrap().len(), 2);
+        assert!(locations.as_array().unwrap().iter().any(|location| {
+            location["uri"] == manifest_uri && location["range"]["start"]["line"] == 27
+        }));
     }
 }
