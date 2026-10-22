@@ -1,7 +1,16 @@
 
-meta Scope {
+// maybe instead of declaration, this should be a keyword
+// because it is a logical boundry declaration.
+boundry Scope {
 
 }
+// maybe instead of declaration, this should be a keyword,
+// because it is a technical boundry declaration.
+boundry Interface {
+
+}
+
+meta Application
 
 meta Event {
 
@@ -16,6 +25,11 @@ meta Entity {
   }
 }
 
+
+meta Rule {
+
+}
+
 meta Action {
   initiator {
     type: Entity
@@ -26,9 +40,15 @@ meta Data {
 
 }
 
+meta State {
+
+}
+
 
 meta WorkflowStage {
-  
+  state {
+    type State
+  }
 }
 
 meta Workflow {
@@ -40,9 +60,7 @@ meta Workflow {
   }
 }
 
-
-
-
 meta Queue {
 
 }
+

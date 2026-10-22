@@ -7,13 +7,13 @@ scope Identity entity User {
 
 
 
-  workflowStage CommonStage {
+workflowStage CommonStage {
 
-  }
+}
 
-  workflowStage SpecialStage {
+workflowStage SpecialStage {
 
-  }
+}
 
 
 
@@ -29,14 +29,24 @@ scope Article {
 
   }
 
-
-  event Evaluated {
+  entity Article {
 
   }
 
+  rule ArticleLettersNumberIsHigherThan { }
+
   workflowStage Evaluation extends CommonStage SpecialStage {
-    context: Author
-    finisher: Evaluated
+    context: [Author, Article];
+
+    state: Initial
+    state: Successful
+      from: Initial
+      when: ArticleLettersNumberIsHigherThan is respected
+      then: emit event Successful;
+    state: Failed
+      from Initial
+      when: ArticleLettersNumberIsHigherThan is not respected
+      then: emit event Failed;
   }
 
 
@@ -48,7 +58,7 @@ scope Article {
   workflow ArticlePublication {
     initiator: ArticlePublication from: ArticlePublicationQueue
     stage: Evaluation
-    stage: Publication after Evaluation
+    stage: Publication after: Evaluation when: Evaluation is successful
   }
 
   queue ArticlePublicationQueue uses RabbitMQ {
@@ -56,13 +66,18 @@ scope Article {
   }
 }
 
-
-
-
-
 technical queue RabbitMQ {
 
 }
+
+
+
+
+
+
+
+
+
 
 
 
