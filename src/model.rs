@@ -1,0 +1,378 @@
+use serde_json::{json, Value};
+
+pub const KEYWORDS: &[&str] = &[
+    "action",
+    "after",
+    "application",
+    "applicationCapability",
+    "applicationType",
+    "authenticates",
+    "boundry",
+    "capability",
+    "consumes",
+    "context",
+    "data",
+    "emit",
+    "entity",
+    "environment",
+    "event",
+    "expose",
+    "extends",
+    "from",
+    "initiator",
+    "interface",
+    "is",
+    "layer",
+    "meta",
+    "queue",
+    "respected",
+    "rule",
+    "scope",
+    "stage",
+    "state",
+    "technology",
+    "then",
+    "type",
+    "uses",
+    "via",
+    "when",
+    "workflow",
+    "workflowStage",
+];
+
+fn symbol_kind(keyword: &str) -> Option<u32> {
+    match keyword {
+        "layer" | "scope" => Some(3),
+        "boundry" | "meta" | "technology" | "environment" | "applicationType" | "entity"
+        | "workflowStage" | "data" => Some(5),
+        "interface" | "applicationCapability" => Some(11),
+        "action" | "workflow" | "rule" => Some(12),
+        "application" | "queue" => Some(19),
+        "state" => Some(22),
+        "event" => Some(24),
+        _ => None,
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TokenKind {
+    Identifier,
+    Punctuation,
+    String,
+}
+
+#[derive(Clone)]
+struct Token {
+    value: String,
+    start: usize,
+    end: usize,
+    kind: TokenKind,
+}
+
+#[derive(Clone)]
+pub struct Declaration {
+    pub name: String,
+    pub kind: String,
+    pub start: usize,
+    pub end: usize,
+    pub name_start: usize,
+    pub name_end: usize,
+    parent: Option<usize>,
+}
+
+#[derive(Clone)]
+pub struct Document {
+    pub uri: String,
+    text: String,
+    line_starts: Vec<usize>,
+    tokens: Vec<Token>,
+    pub declarations: Vec<Declaration>,
+    pub diagnostics: Vec<Value>,
+}
+
+impl Document {
+    pub fn new(uri: String, text: String) -> Self {
+        let mut line_starts = vec![0];
+        for (index, byte) in text.bytes().enumerate() {
+            if byte == b'\n' {
+                line_starts.push(index + 1);
+            }
+        }
+        let mut document = Self {
+            uri,
+            text,
+            line_starts,
+            tokens: Vec::new(),
+            declarations: Vec::new(),
+            diagnostics: Vec::new(),
+        };
+        document.scan();
+        document.parse_structure();
+        document
+    }
+
+    pub fn position(&self, offset: usize) -> Value {
+        let offset = offset.min(self.text.len());
+        let line = self.line_starts.partition_point(|start| *start <= offset) - 1;
+        let character = self.text[self.line_starts[line]..offset]
+            .encode_utf16()
+            .count();
+        json!({"line": line, "character": character})
+    }
+
+    pub fn offset(&self, line: u64, character: u64) -> usize {
+        let Some(&start) = self.line_starts.get(line as usize) else {
+            return self.text.len();
+        };
+        let end = self
+            .line_starts
+            .get(line as usize + 1)
+            .copied()
+            .unwrap_or(self.text.len());
+        let mut units = character;
+        let mut offset = start;
+        for ch in self.text[start..end].chars() {
+            let width = ch.len_utf16() as u64;
+            if width > units {
+                break;
+            }
+            units -= width;
+            offset += ch.len_utf8();
+        }
+        offset
+    }
+
+    pub fn range(&self, start: usize, end: usize) -> Value {
+        json!({"start": self.position(start), "end": self.position(end)})
+    }
+
+    pub fn identifier_at(&self, offset: usize) -> Option<&str> {
+        self.tokens
+            .iter()
+            .find(|token| {
+                token.kind == TokenKind::Identifier && token.start <= offset && offset < token.end
+            })
+            .map(|token| token.value.as_str())
+    }
+
+    pub fn symbol_tree(&self) -> Vec<Value> {
+        self.declarations
+            .iter()
+            .enumerate()
+            .filter(|(_, declaration)| declaration.parent.is_none())
+            .map(|(index, _)| self.symbol(index))
+            .collect()
+    }
+
+    fn symbol(&self, index: usize) -> Value {
+        let declaration = &self.declarations[index];
+        let children: Vec<Value> = self
+            .declarations
+            .iter()
+            .enumerate()
+            .filter(|(_, child)| child.parent == Some(index))
+            .map(|(child_index, _)| self.symbol(child_index))
+            .collect();
+        json!({
+            "name": declaration.name,
+            "detail": declaration.kind,
+            "kind": symbol_kind(&declaration.kind).unwrap_or(1),
+            "range": self.range(declaration.start, declaration.end),
+            "selectionRange": self.range(declaration.name_start, declaration.name_end),
+            "children": children,
+        })
+    }
+
+    fn diagnose(&mut self, start: usize, end: usize, message: &str) {
+        self.diagnostics.push(json!({
+            "range": self.range(start, end),
+            "severity": 1,
+            "source": "saml",
+            "message": message,
+        }));
+    }
+
+    fn scan(&mut self) {
+        let text = self.text.clone();
+        let mut index = 0;
+        while index < text.len() {
+            let start = index;
+            let ch = text[index..].chars().next().unwrap();
+            if ch.is_whitespace() {
+                index += ch.len_utf8();
+                continue;
+            }
+            if text[index..].starts_with("//") {
+                index = text[index..]
+                    .find('\n')
+                    .map(|next| index + next)
+                    .unwrap_or(text.len());
+                continue;
+            }
+            if ch == '"' || ch == '\'' {
+                index += ch.len_utf8();
+                let mut terminated = false;
+                while index < text.len() {
+                    let current = text[index..].chars().next().unwrap();
+                    if current == ch {
+                        index += current.len_utf8();
+                        terminated = true;
+                        break;
+                    }
+                    if current == '\n' {
+                        break;
+                    }
+                    if current == '\\' {
+                        index += current.len_utf8();
+                        if index < text.len() {
+                            index += text[index..].chars().next().unwrap().len_utf8();
+                        }
+                    } else {
+                        index += current.len_utf8();
+                    }
+                }
+                if !terminated {
+                    self.diagnose(start, index, "Unterminated string");
+                }
+                self.tokens.push(Token {
+                    value: text[start..index].into(),
+                    start,
+                    end: index,
+                    kind: TokenKind::String,
+                });
+                continue;
+            }
+            if ch.is_alphabetic() || ch == '_' {
+                index += ch.len_utf8();
+                while index < text.len() {
+                    let current = text[index..].chars().next().unwrap();
+                    if !current.is_alphanumeric() && current != '_' {
+                        break;
+                    }
+                    index += current.len_utf8();
+                }
+                self.tokens.push(Token {
+                    value: text[start..index].into(),
+                    start,
+                    end: index,
+                    kind: TokenKind::Identifier,
+                });
+                continue;
+            }
+            index += ch.len_utf8();
+            self.tokens.push(Token {
+                value: ch.to_string(),
+                start,
+                end: index,
+                kind: TokenKind::Punctuation,
+            });
+        }
+    }
+
+    fn parse_structure(&mut self) {
+        let mut brackets: Vec<(char, usize, usize)> = Vec::new();
+        let mut blocks: Vec<Option<usize>> = Vec::new();
+        let mut segment: Vec<usize> = Vec::new();
+        for index in 0..self.tokens.len() {
+            let token = self.tokens[index].clone();
+            if token.kind == TokenKind::Identifier
+                && token.value == "state"
+                && self
+                    .tokens
+                    .get(index + 1)
+                    .is_some_and(|next| next.value == ":")
+                && self
+                    .tokens
+                    .get(index + 2)
+                    .is_some_and(|next| next.kind == TokenKind::Identifier)
+            {
+                let name = &self.tokens[index + 2];
+                self.declarations.push(Declaration {
+                    name: name.value.clone(),
+                    kind: "state".into(),
+                    start: token.start,
+                    end: name.end,
+                    name_start: name.start,
+                    name_end: name.end,
+                    parent: blocks.iter().rev().find_map(|item| *item),
+                });
+            }
+            if token.kind != TokenKind::Punctuation {
+                segment.push(index);
+                continue;
+            }
+            match token.value.as_str() {
+                "{" | "[" | "(" => {
+                    brackets.push((token.value.chars().next().unwrap(), token.start, token.end));
+                    if token.value == "{" {
+                        let declaration = self.declaration_for(&segment, token.end, &blocks);
+                        blocks.push(declaration);
+                        segment.clear();
+                    } else {
+                        segment.push(index);
+                    }
+                }
+                "}" | "]" | ")" => {
+                    let expected = match token.value.as_str() {
+                        "}" => '{',
+                        "]" => '[',
+                        _ => '(',
+                    };
+                    if brackets.last().is_some_and(|(ch, _, _)| *ch == expected) {
+                        brackets.pop();
+                    } else {
+                        self.diagnose(
+                            token.start,
+                            token.end,
+                            &format!("Unexpected '{}'", token.value),
+                        );
+                    }
+                    if token.value == "}" {
+                        if let Some(Some(declaration)) = blocks.pop() {
+                            self.declarations[declaration].end = token.end;
+                        }
+                        segment.clear();
+                    } else {
+                        segment.push(index);
+                    }
+                }
+                ";" => segment.clear(),
+                _ => segment.push(index),
+            }
+        }
+        for (ch, start, end) in brackets {
+            self.diagnose(start, end, &format!("Unclosed '{ch}'"));
+        }
+    }
+
+    fn declaration_for(
+        &mut self,
+        segment: &[usize],
+        end: usize,
+        blocks: &[Option<usize>],
+    ) -> Option<usize> {
+        let pair = segment
+            .windows(2)
+            .filter_map(|window| {
+                let keyword = &self.tokens[window[0]];
+                let name = &self.tokens[window[1]];
+                (keyword.kind == TokenKind::Identifier
+                    && name.kind == TokenKind::Identifier
+                    && symbol_kind(&keyword.value).is_some()
+                    && symbol_kind(&name.value).is_none())
+                .then_some((keyword, name))
+            })
+            .next_back()?;
+        let index = self.declarations.len();
+        self.declarations.push(Declaration {
+            name: pair.1.value.clone(),
+            kind: pair.0.value.clone(),
+            start: pair.0.start,
+            end,
+            name_start: pair.1.start,
+            name_end: pair.1.end,
+            parent: blocks.iter().rev().find_map(|item| *item),
+        });
+        Some(index)
+    }
+}

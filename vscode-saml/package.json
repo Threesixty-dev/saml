@@ -1,0 +1,28 @@
+{
+  "name": "saml",
+  "displayName": "SAML",
+  "description": "Editor support for the SAML modeling language",
+  "publisher": "local",
+  "version": "0.1.1",
+  "engines": { "vscode": "^1.100.0" },
+  "main": "./extension.js",
+  "activationEvents": ["onLanguage:saml"],
+  "contributes": {
+    "languages": [
+      { "id": "saml", "aliases": ["SAML"], "extensions": [".saml"] }
+    ],
+    "grammars": [
+      { "language": "saml", "scopeName": "source.saml", "path": "./syntaxes/saml.tmLanguage.json" }
+    ],
+    "configuration": {
+      "title": "SAML",
+      "properties": {
+        "saml.serverPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the saml-lsp binary. Defaults to target/debug/saml-lsp in the workspace."
+        }
+      }
+    }
+  }
+}

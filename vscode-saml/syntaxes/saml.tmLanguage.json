@@ -1,0 +1,20 @@
+{
+  "name": "SAML",
+  "scopeName": "source.saml",
+  "patterns": [
+    { "name": "comment.line.double-slash.saml", "match": "//.*$" },
+    { "name": "string.quoted.double.saml", "begin": "\"", "end": "\"", "patterns": [
+      { "name": "constant.character.escape.saml", "match": "\\\\." }
+    ] },
+    { "name": "string.quoted.single.saml", "begin": "'", "end": "'", "patterns": [
+      { "name": "constant.character.escape.saml", "match": "\\\\." }
+    ] },
+    { "name": "variable.other.property.saml", "match": "\\b(?:capabilities|capability|context|environment|expose|initiator|relationship|stage|technology|type)(?=\\s*[:{])" },
+    { "name": "keyword.declaration.saml", "match": "\\b(?:action|application|applicationCapability|applicationType|boundry|data|entity|environment|event|interface|layer|meta|queue|rule|scope|state|technology|workflow|workflowStage)\\b" },
+    { "name": "keyword.control.saml", "match": "\\b(?:after|authenticates|consumes|emit|extends|from|is|not|respected|then|uses|via|when)\\b" },
+    { "name": "constant.language.saml", "match": "\\b(?:false|successful|true)\\b" },
+    { "name": "entity.name.type.saml", "match": "\\b[A-Z][A-Za-z0-9_]*\\b" },
+    { "name": "punctuation.separator.saml", "match": "[:,;]" },
+    { "name": "punctuation.definition.saml", "match": "[{}\\[\\]()]" }
+  ]
+}

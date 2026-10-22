@@ -4,4 +4,6 @@ SAML stands for **Software Architecture Modeling Language**. Its goal is to redu
 
 The project is in its initial stage. Language syntax, tools, and examples will be documented here as they are added.
 
+An initial [language server](LANGUAGE_SERVER.md) supports editing the evolving `.saml` examples.
+
 See [competitors](competitors/README.md) for worked examples of existing modeling approaches.
