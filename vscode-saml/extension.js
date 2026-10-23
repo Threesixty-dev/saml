@@ -200,7 +200,7 @@ async function activate(context) {
         const result = await client.request('textDocument/prepareRename', {
           textDocument: { uri: document.uri.toString() }, position
         });
-        if (!result) throw new Error('No renameable SAML concept or boundary here');
+        if (!result) throw new Error('No renameable SAML symbol here');
         return { range: asRange(result.range), placeholder: result.placeholder };
       },
       async provideRenameEdits(document, position, newName) {

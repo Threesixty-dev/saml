@@ -51,7 +51,8 @@ The JSON map exposes `concepts`, `materializations`, `links`, `bindings`, and
   Reference links outside the source materialization's scope or descendants
   are marked `crosses_scope`. Links whose target lies outside the source's
   boundary memberships are marked `crosses_boundary`; boundary membership
-  links are not crossings.
+  links are not crossings. Boundary qualifiers retain the exact source span of
+  each name, including list qualifiers such as `layer [Business, Application]`.
 - **Bindings** record a typed property reference with a local argument block,
   such as `capability: RestApi { expose: [Article, Author] }`. They retain the
   target materialization and the resolved argument values without modifying the
@@ -69,6 +70,12 @@ matching materialization that exists only in another boundary produces an
 `inaccessible-reference` finding. Declarations outside boundaries are visible
 across the workspace. Structural boundary membership links do not require an
 export.
+
+The editor uses resolved link targets as symbol identities for materialization
+navigation, reference search, and rename. It can distinguish equal names in
+different boundaries and can include repeated declarations of one identity.
+Unresolved references have no target to navigate to. Rename checks for other
+untracked uses of the old and new spelling before returning edits.
 
 A property rule such as `concept Action { initiator { type: Entity } }` checks that an
 `initiator: Name` value on an `action` materialization resolves to an `entity`

@@ -174,6 +174,11 @@ struct PendingBinding {
     arguments: Vec<ModelAssignment>,
 }
 
+struct HeaderQualifier {
+    part: ScopePart,
+    source: SourceSpan,
+}
+
 struct ParameterSpec {
     kind: String,
     many: bool,
@@ -356,10 +361,10 @@ pub fn analyze(sources: &HashMap<String, String>) -> SemanticMap {
             }
             let qualifiers = header_qualifiers(document, declaration, &vocabulary);
             for qualifier in &qualifiers {
-                if qualifier.kind != "layer" {
-                    push_unique(&mut scope, qualifier.clone());
+                if qualifier.part.kind != "layer" {
+                    push_unique(&mut scope, qualifier.part.clone());
                 }
-                push_unique(&mut boundary_path, qualifier.clone());
+                push_unique(&mut boundary_path, qualifier.part.clone());
             }
             let id = materialization_id(&scope, &declaration.kind, &declaration.name);
             let name_span = span(document, declaration.name_start, declaration.name_end);
@@ -410,16 +415,17 @@ pub fn analyze(sources: &HashMap<String, String>) -> SemanticMap {
             }
 
             for qualifier in &qualifiers {
-                if !matches!(qualifier.kind.as_str(), "scope" | "layer") {
+                if !matches!(qualifier.part.kind.as_str(), "scope" | "layer") {
                     continue;
                 }
-                let boundary_id = materialization_id(&[], &qualifier.kind, &qualifier.name);
+                let boundary_id =
+                    materialization_id(&[], &qualifier.part.kind, &qualifier.part.name);
                 materializations
                     .entry(boundary_id.clone())
                     .or_insert_with(|| Materialization {
                         id: boundary_id,
-                        kind: qualifier.kind.clone(),
-                        name: qualifier.name.clone(),
+                        kind: qualifier.part.kind.clone(),
+                        name: qualifier.part.name.clone(),
                         scope: Vec::new(),
                         boundaries: Vec::new(),
                         definitions: Vec::new(),
@@ -452,9 +458,9 @@ pub fn analyze(sources: &HashMap<String, String>) -> SemanticMap {
                     from: id.clone(),
                     source_scope: scope.clone(),
                     source_boundaries: reference_boundaries.clone(),
-                    target_kind: qualifier.kind,
-                    target_name: qualifier.name,
-                    source: span(document, declaration.header_start, declaration.start),
+                    target_kind: qualifier.part.kind,
+                    target_name: qualifier.part.name,
+                    source: qualifier.source,
                 });
             }
             for token in header_extends(document, declaration) {
@@ -978,7 +984,7 @@ fn header_qualifiers(
     document: &Document,
     declaration: &Declaration,
     vocabulary: &Vocabulary,
-) -> Vec<ScopePart> {
+) -> Vec<HeaderQualifier> {
     let tokens = header_tokens(document, declaration);
     let mut result = Vec::new();
     for (index, token) in tokens.iter().enumerate() {
@@ -989,13 +995,13 @@ fn header_qualifiers(
             if next.kind == TokenKind::Identifier
                 && next.value.chars().next().is_some_and(char::is_uppercase)
             {
-                push_unique(
-                    &mut result,
-                    ScopePart {
+                result.push(HeaderQualifier {
+                    part: ScopePart {
                         kind: token.value.clone(),
                         name: next.value.clone(),
                     },
-                );
+                    source: span(document, next.start, next.end),
+                });
             } else if next.value == "[" {
                 for item in tokens
                     .iter()
@@ -1003,13 +1009,13 @@ fn header_qualifiers(
                     .take_while(|item| item.value != "]")
                 {
                     if item.kind == TokenKind::Identifier {
-                        push_unique(
-                            &mut result,
-                            ScopePart {
+                        result.push(HeaderQualifier {
+                            part: ScopePart {
                                 kind: token.value.clone(),
                                 name: item.value.clone(),
                             },
-                        );
+                            source: span(document, item.start, item.end),
+                        });
                     }
                 }
             }

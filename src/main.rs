@@ -1,10 +1,11 @@
 use saml_lsp::model::{Document, Vocabulary, VocabularyKind, RESTRICTED_KEYWORDS};
 use saml_lsp::semantic::{
-    analyze, Concept, ConceptProperty, SemanticMap, Severity, SourceSpan, VocabularyUseKind,
+    analyze, Concept, ConceptProperty, Link, Materialization, SemanticMap, Severity, SourceSpan,
+    VocabularyUseKind,
 };
 use saml_lsp::workspace::{collect_sources, uri_to_path};
 use serde_json::{json, Value};
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -203,40 +204,34 @@ impl<R: BufRead, W: Write> Server<R, W> {
                                                     property.definition.end)}])));
                     }
                 }
-                let Some(name) = self.target_name(params) else {
-                    return Ok(Some(json!([])));
-                };
-                let mut locations = Vec::new();
-                let vocabulary = Vocabulary::from_sources(&sources);
-                if let Some(entries) = vocabulary.entries.get(&name) {
-                    for entry in entries {
-                        if let Some(text) = sources.get(&entry.uri) {
-                            let document = Document::new(entry.uri.clone(), text.clone());
-                            locations.push(json!({"uri": entry.uri,
-                                "range": document.range(entry.start, entry.end)}));
-                        }
-                    }
+                if let Some((materialization, _)) = self.materialization_at(params, &map) {
+                    return Ok(Some(json!(locations_for(
+                        &sources,
+                        materialization.definitions.iter()
+                    ))));
                 }
-                for document in self.workspace_documents() {
-                    for declaration in &document.declarations {
-                        if declaration.name == name {
-                            locations.push(json!({"uri": document.uri,
-                                "range": document.range(declaration.name_start,
-                                                        declaration.name_end)}));
-                        }
-                    }
+                if let Some((concept, _)) = self.concept_at(params, &map) {
+                    return Ok(Some(json!(locations_for(
+                        &sources,
+                        concept.definitions.iter()
+                    ))));
                 }
-                Ok(Some(json!(locations)))
+                Ok(Some(json!([])))
             }
             "textDocument/references" => {
                 let sources = self.workspace_sources();
                 let map = analyze(&sources);
-                let Some((concept, _)) = self.vocabulary_at(params, &map) else {
-                    return Ok(Some(json!([])));
-                };
                 let include_declaration = params["context"]["includeDeclaration"]
                     .as_bool()
                     .unwrap_or(false);
+                if let Some((materialization, _)) = self.materialization_at(params, &map) {
+                    let spans =
+                        materialization_spans(&sources, &map, materialization, include_declaration);
+                    return Ok(Some(json!(locations_for(&sources, spans.into_iter()))));
+                }
+                let Some((concept, _)) = self.vocabulary_at(params, &map) else {
+                    return Ok(Some(json!([])));
+                };
                 let mut spans: Vec<&SourceSpan> =
                     concept.uses.iter().map(|usage| &usage.source).collect();
                 if include_declaration {
@@ -258,6 +253,18 @@ impl<R: BufRead, W: Write> Server<R, W> {
             "textDocument/prepareRename" => {
                 let sources = self.workspace_sources();
                 let map = analyze(&sources);
+                if let Some((materialization, source)) = self.materialization_at(params, &map) {
+                    if !materialization.implicit && materialization.kind != "state" {
+                        if let Some(text) = sources.get(&source.uri) {
+                            let document = Document::new(source.uri.clone(), text.clone());
+                            return Ok(Some(json!({
+                                "range": document.range(source.start, source.end),
+                                "placeholder": materialization.name
+                            })));
+                        }
+                    }
+                    return Ok(Some(Value::Null));
+                }
                 let Some((concept, source)) = self.vocabulary_at(params, &map) else {
                     return Ok(Some(Value::Null));
                 };
@@ -273,10 +280,17 @@ impl<R: BufRead, W: Write> Server<R, W> {
             "textDocument/rename" => {
                 let sources = self.workspace_sources();
                 let map = analyze(&sources);
+                if let Some((materialization, _)) = self.materialization_at(params, &map) {
+                    return rename_materialization(
+                        &sources,
+                        &map,
+                        materialization,
+                        params["newName"].as_str().unwrap_or_default(),
+                    )
+                    .map(Some);
+                }
                 let Some((concept, _)) = self.vocabulary_at(params, &map) else {
-                    return Err(invalid_rename(
-                        "No renameable concept or boundary at this position",
-                    ));
+                    return Err(invalid_rename("No renameable symbol at this position"));
                 };
                 let (new_name, new_word) =
                     normalize_vocabulary_name(params["newName"].as_str().unwrap_or_default())?;
@@ -350,43 +364,24 @@ impl<R: BufRead, W: Write> Server<R, W> {
                     return Ok(Some(json!({"contents": {"kind": "markdown",
                         "value": description}})));
                 }
+                if let Some((materialization, _)) = self.materialization_at(params, &map) {
+                    return Ok(Some(json!({"contents": {"kind": "markdown",
+                        "value": format!("{} `{}`\n\n`{}`", materialization.kind,
+                            materialization.name, materialization.id)}})));
+                }
+                if let Some((concept, _)) = self.concept_at(params, &map) {
+                    return Ok(Some(json!({"contents": {"kind": "markdown",
+                        "value": format!("spec vocabulary `{}`: {}", concept.word,
+                            concept.roles.join(" and "))}})));
+                }
                 let Some(name) = self.target_name(params) else {
                     return Ok(Some(Value::Null));
                 };
-                let vocabulary = Vocabulary::from_sources(&sources);
-                let mut descriptions = BTreeSet::new();
-                if let Some(entries) = vocabulary.entries.get(&name) {
-                    let mut roles = Vec::new();
-                    if entries
-                        .iter()
-                        .any(|entry| entry.kind == VocabularyKind::Concept)
-                    {
-                        roles.push("concept");
-                    }
-                    if entries
-                        .iter()
-                        .any(|entry| entry.kind == VocabularyKind::Boundary)
-                    {
-                        roles.push("boundary");
-                    }
-                    descriptions
-                        .insert(format!("spec vocabulary `{name}`: {}", roles.join(" and ")));
-                }
                 if RESTRICTED_KEYWORDS.contains(&name.as_str()) {
-                    descriptions.insert(format!("built-in keyword `{name}`"));
-                }
-                descriptions.extend(
-                    self.workspace_documents()
-                        .iter()
-                        .flat_map(|document| &document.declarations)
-                        .filter(|declaration| declaration.name == name)
-                        .map(|declaration| format!("{} `{}`", declaration.kind, declaration.name)),
-                );
-                if descriptions.is_empty() {
-                    Ok(Some(Value::Null))
-                } else {
                     Ok(Some(json!({"contents": {"kind": "markdown",
-                        "value": descriptions.into_iter().collect::<Vec<_>>().join("\n\n")}})))
+                        "value": format!("built-in keyword `{name}`")}})))
+                } else {
+                    Ok(Some(Value::Null))
                 }
             }
             "textDocument/completion" => {
@@ -513,7 +508,7 @@ impl<R: BufRead, W: Write> Server<R, W> {
             .map(|property| (concept.word.as_str(), property))
     }
 
-    fn vocabulary_at<'a>(
+    fn concept_at<'a>(
         &self,
         params: &Value,
         map: &'a SemanticMap,
@@ -522,22 +517,59 @@ impl<R: BufRead, W: Write> Server<R, W> {
         let document = self.document(uri)?;
         let position = &params["position"];
         let offset = document.offset(position["line"].as_u64()?, position["character"].as_u64()?);
-        map.concepts
-            .iter()
-            // `state:` also creates an implicit materialization, so its key cannot yet be renamed safely.
-            .filter(|concept| {
-                concept.word != "state" && !RESTRICTED_KEYWORDS.contains(&concept.word.as_str())
-            })
-            .find_map(|concept| {
-                concept
-                    .definitions
-                    .iter()
-                    .chain(concept.uses.iter().map(|usage| &usage.source))
-                    .find(|source| {
-                        source.uri == uri && source.start <= offset && offset < source.end
-                    })
-                    .map(|source| (concept, source))
-            })
+        map.concepts.iter().find_map(|concept| {
+            concept
+                .definitions
+                .iter()
+                .chain(concept.uses.iter().map(|usage| &usage.source))
+                .find(|source| source.uri == uri && source.start <= offset && offset < source.end)
+                .map(|source| (concept, source))
+        })
+    }
+
+    fn vocabulary_at<'a>(
+        &self,
+        params: &Value,
+        map: &'a SemanticMap,
+    ) -> Option<(&'a Concept, &'a SourceSpan)> {
+        let (concept, source) = self.concept_at(params, map)?;
+        // `state:` is both a property key and a materialization declaration.
+        (concept.word != "state" && !RESTRICTED_KEYWORDS.contains(&concept.word.as_str()))
+            .then_some((concept, source))
+    }
+
+    fn materialization_at<'a>(
+        &self,
+        params: &Value,
+        map: &'a SemanticMap,
+    ) -> Option<(&'a Materialization, &'a SourceSpan)> {
+        let uri = params["textDocument"]["uri"].as_str()?;
+        let document = self.document(uri)?;
+        let position = &params["position"];
+        let offset = document.offset(position["line"].as_u64()?, position["character"].as_u64()?);
+        let contains = |source: &SourceSpan| {
+            source.uri == uri && source.start <= offset && offset < source.end
+        };
+        if let Some(found) = map.materializations.iter().find_map(|materialization| {
+            materialization
+                .definitions
+                .iter()
+                .find(|source| contains(source))
+                .map(|source| (materialization, source))
+        }) {
+            return Some(found);
+        }
+        map.links.iter().find_map(|link| {
+            if !contains(&link.source) {
+                return None;
+            }
+            let materialization = map
+                .materializations
+                .iter()
+                .find(|materialization| materialization.id == link.to)?;
+            is_name_reference(link, materialization, document.text())
+                .then_some((materialization, &link.source))
+        })
     }
 
     fn workspace_documents(&self) -> Vec<Document> {
@@ -561,6 +593,165 @@ impl<R: BufRead, W: Write> Server<R, W> {
         }
         sources
     }
+}
+
+fn is_manifest(uri: &str) -> bool {
+    uri.ends_with(".spec") || uri.ends_with("/spec.saml")
+}
+
+fn is_name_reference(link: &Link, target: &Materialization, text: &str) -> bool {
+    link.relation != "boundary"
+        || text.get(link.source.start..link.source.end) == Some(target.name.as_str())
+}
+
+fn materialization_spans<'a>(
+    sources: &HashMap<String, String>,
+    map: &'a SemanticMap,
+    materialization: &'a Materialization,
+    include_declarations: bool,
+) -> Vec<&'a SourceSpan> {
+    let mut spans: Vec<&SourceSpan> = map
+        .links
+        .iter()
+        .filter(|link| {
+            link.to == materialization.id
+                && sources
+                    .get(&link.source.uri)
+                    .is_some_and(|text| is_name_reference(link, materialization, text))
+                && !materialization.definitions.contains(&link.source)
+        })
+        .map(|link| &link.source)
+        .collect();
+    if include_declarations {
+        spans.extend(&materialization.definitions);
+    }
+    spans.sort_by_key(|source| (&source.uri, source.start, source.end));
+    spans.dedup();
+    spans
+}
+
+fn locations_for<'a>(
+    sources: &HashMap<String, String>,
+    spans: impl IntoIterator<Item = &'a SourceSpan>,
+) -> Vec<Value> {
+    let mut spans: Vec<_> = spans.into_iter().collect();
+    spans.sort_by_key(|source| (&source.uri, source.start, source.end));
+    spans.dedup();
+    spans
+        .into_iter()
+        .filter_map(|source| {
+            let text = sources.get(&source.uri)?;
+            let document = Document::new(source.uri.clone(), text.clone());
+            Some(json!({"uri": source.uri,
+                "range": document.range(source.start, source.end)}))
+        })
+        .collect()
+}
+
+fn rename_materialization(
+    sources: &HashMap<String, String>,
+    map: &SemanticMap,
+    materialization: &Materialization,
+    new_name: &str,
+) -> io::Result<Value> {
+    if materialization.implicit || materialization.kind == "state" {
+        return Err(invalid_rename(
+            "This materialization cannot be renamed safely yet",
+        ));
+    }
+    let mut chars = new_name.chars();
+    if !chars.next().is_some_and(char::is_uppercase)
+        || !chars.all(|ch| ch.is_alphanumeric() || ch == '_')
+    {
+        return Err(invalid_rename(
+            "Materialization name must begin with an uppercase letter and contain only letters, digits, or underscores",
+        ));
+    }
+    if new_name != materialization.name
+        && map.materializations.iter().any(|other| {
+            other.id != materialization.id
+                && other.kind == materialization.kind
+                && other.name == new_name
+        })
+    {
+        return Err(invalid_rename(
+            "Another materialization of this kind already has that name",
+        ));
+    }
+    if map.findings.iter().any(|finding| {
+        matches!(
+            finding.code.as_str(),
+            "unresolved-reference"
+                | "ambiguous-reference"
+                | "inaccessible-reference"
+                | "wrong-reference-kind"
+        ) && sources
+            .get(&finding.source.uri)
+            .and_then(|text| text.get(finding.source.start..finding.source.end))
+            .is_some_and(|name| name == materialization.name || name == new_name)
+    }) {
+        return Err(invalid_rename(
+            "Resolve other references with this name before renaming",
+        ));
+    }
+    if new_name != materialization.name
+        && [materialization.name.as_str(), new_name]
+            .into_iter()
+            .any(|name| has_untracked_occurrences(sources, map, name))
+    {
+        return Err(invalid_rename(
+            "Cannot rename while this name has untyped or otherwise untracked uses",
+        ));
+    }
+    let spans = materialization_spans(sources, map, materialization, true);
+    let mut changes: BTreeMap<String, Vec<Value>> = BTreeMap::new();
+    for source in spans {
+        if let Some(text) = sources.get(&source.uri) {
+            let document = Document::new(source.uri.clone(), text.clone());
+            changes.entry(source.uri.clone()).or_default().push(json!({
+                "range": document.range(source.start, source.end),
+                "newText": new_name,
+            }));
+        }
+    }
+    Ok(json!({"changes": changes}))
+}
+
+fn has_untracked_occurrences(
+    sources: &HashMap<String, String>,
+    map: &SemanticMap,
+    name: &str,
+) -> bool {
+    let mut known: HashSet<(String, usize, usize)> = map
+        .materializations
+        .iter()
+        .flat_map(|materialization| &materialization.definitions)
+        .map(|source| (source.uri.clone(), source.start, source.end))
+        .collect();
+    for link in &map.links {
+        let Some(target) = map
+            .materializations
+            .iter()
+            .find(|materialization| materialization.id == link.to)
+        else {
+            continue;
+        };
+        if sources
+            .get(&link.source.uri)
+            .is_some_and(|text| is_name_reference(link, target, text))
+        {
+            known.insert((link.source.uri.clone(), link.source.start, link.source.end));
+        }
+    }
+    sources
+        .iter()
+        .filter(|(uri, _)| !is_manifest(uri))
+        .any(|(uri, text)| {
+            Document::new(uri.clone(), text.clone())
+                .identifier_spans(name)
+                .into_iter()
+                .any(|(start, end)| !known.contains(&(uri.clone(), start, end)))
+        })
 }
 
 fn upper_initial(word: &str) -> String {
@@ -646,7 +837,7 @@ mod tests {
                     "position": {"line": 2, "character": 11}}),
             )
             .unwrap();
-        assert_eq!(materialization_name, Some(Value::Null));
+        assert_eq!(materialization_name.unwrap()["placeholder"], "Interface");
         let references = server
             .dispatch(
                 "textDocument/references",
@@ -693,7 +884,7 @@ mod tests {
                     "context": {"includeDeclaration": true}}),
             )
             .unwrap();
-        assert_eq!(name_references, Some(json!([])));
+        assert_eq!(name_references.unwrap().as_array().unwrap().len(), 1);
         let edit = server
             .dispatch(
                 "textDocument/rename",
@@ -770,6 +961,352 @@ mod tests {
             result.replace_range(start..end, &replacement);
         }
         result
+    }
+
+    fn at_line(uri: &str, text: &str, line: usize, name: &str) -> Value {
+        let content = text.lines().nth(line).unwrap();
+        let start = content.find(name).unwrap();
+        let character = content[..start + 1].encode_utf16().count();
+        json!({"textDocument": {"uri": uri},
+            "position": {"line": line, "character": character}})
+    }
+
+    #[test]
+    fn materialization_navigation_and_rename_follow_resolved_identity() {
+        let spec_uri = "file:///model.spec";
+        let model_uri = "file:///model.saml";
+        let spec = "boundary Scope {}\nconcept Data {}\nconcept Action { target { type: Data } }\nconcept Holder { asset { type: Data } }";
+        let model = "scope Alpha Public data Record {}\nscope Beta Public data Record {}\nscope Beta Public data Other {}\ndata Catalog { entry: { type: Data } }\nscope Alpha action UseAlpha { target: Record }\nscope Beta action UseBeta { target: Record }\nscope Alpha data Derived extends Record {}\nscope Alpha holder H { asset: Catalog { entry: Record } }\n// Record";
+        let mut server = Server::new(BufReader::new(Cursor::new(Vec::new())), Vec::new());
+        for (uri, text) in [(spec_uri, spec), (model_uri, model)] {
+            server
+                .dispatch(
+                    "textDocument/didOpen",
+                    &json!({"textDocument": {"uri": uri, "text": text}}),
+                )
+                .unwrap();
+        }
+        let alpha = at_line(model_uri, model, 4, "Record");
+        let beta = at_line(model_uri, model, 5, "Record");
+        let binding = at_line(model_uri, model, 7, "Record");
+        for (position, declaration_line) in [(&alpha, 0), (&beta, 1), (&binding, 0)] {
+            let locations = server
+                .dispatch("textDocument/definition", position)
+                .unwrap()
+                .unwrap();
+            assert_eq!(locations.as_array().unwrap().len(), 1);
+            assert_eq!(locations[0]["range"]["start"]["line"], declaration_line);
+        }
+        let own_definition = server
+            .dispatch(
+                "textDocument/definition",
+                &at_line(model_uri, model, 0, "Record"),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(own_definition.as_array().unwrap().len(), 1);
+        assert_eq!(own_definition[0]["range"]["start"]["line"], 0);
+        let hover = server
+            .dispatch("textDocument/hover", &alpha)
+            .unwrap()
+            .unwrap();
+        assert!(hover["contents"]["value"]
+            .as_str()
+            .unwrap()
+            .contains("/scope:Alpha/data:Record"));
+        let references = |server: &mut Server<_, _>, include_declaration| {
+            server
+                .dispatch(
+                    "textDocument/references",
+                    &json!({"textDocument": {"uri": model_uri},
+                        "position": alpha["position"],
+                        "context": {"includeDeclaration": include_declaration}}),
+                )
+                .unwrap()
+                .unwrap()
+        };
+        let uses = references(&mut server, false);
+        let lines: Vec<_> = uses
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|location| location["range"]["start"]["line"].as_u64().unwrap())
+            .collect();
+        assert_eq!(lines, [4, 6, 7]);
+        let with_declaration = references(&mut server, true);
+        assert_eq!(with_declaration.as_array().unwrap().len(), 4);
+        assert_eq!(with_declaration[0]["range"]["start"]["line"], 0);
+        let prepared = server
+            .dispatch("textDocument/prepareRename", &binding)
+            .unwrap()
+            .unwrap();
+        assert_eq!(prepared["placeholder"], "Record");
+        let edit = server
+            .dispatch(
+                "textDocument/rename",
+                &json!({"textDocument": {"uri": model_uri},
+                    "position": binding["position"], "newName": "Revised"}),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(edit["changes"][model_uri].as_array().unwrap().len(), 4);
+        let changed = apply_edits(model_uri, model, &edit["changes"][model_uri]);
+        assert!(changed.contains("scope Alpha Public data Revised {}"));
+        assert!(changed.contains("scope Beta Public data Record {}"));
+        assert!(changed.contains("scope Beta action UseBeta { target: Record }"));
+        assert!(changed.contains("scope Alpha data Derived extends Revised {}"));
+        assert!(changed.contains("entry: Revised"));
+        assert!(changed.ends_with("// Record"));
+        for new_name in ["Other", "lowercase", "Two Words"] {
+            assert!(server
+                .dispatch(
+                    "textDocument/rename",
+                    &json!({"textDocument": {"uri": model_uri},
+                    "position": alpha["position"], "newName": new_name})
+                )
+                .is_err());
+        }
+
+        let updated = format!("{model}\nscope Gamma action Ambiguous {{ target: Record }}\nscope Alpha data Secret {{}}\nscope Beta action Blocked {{ target: Secret }}");
+        server
+            .dispatch(
+                "textDocument/didChange",
+                &json!({"textDocument": {"uri": model_uri},
+                "contentChanges": [{"text": updated}]}),
+            )
+            .unwrap();
+        for (line, name) in [(9, "Record"), (11, "Secret")] {
+            let position = at_line(model_uri, &updated, line, name);
+            let definitions = server
+                .dispatch("textDocument/definition", &position)
+                .unwrap()
+                .unwrap();
+            assert_eq!(definitions, json!([]));
+            let prepared = server
+                .dispatch("textDocument/prepareRename", &position)
+                .unwrap()
+                .unwrap();
+            assert_eq!(prepared, Value::Null);
+        }
+        assert!(server
+            .dispatch(
+                "textDocument/rename",
+                &json!({"textDocument": {"uri": model_uri},
+                "position": alpha["position"], "newName": "Revised"})
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn repeated_materialization_declarations_are_renamed_together() {
+        let first_uri = "file:///first.saml";
+        let second_uri = "file:///second.saml";
+        let first = "data Shared {}";
+        let second = "data Shared {}\naction Use { target: Shared }";
+        let mut server = Server::new(BufReader::new(Cursor::new(Vec::new())), Vec::new());
+        for (uri, text) in [
+            (
+                "file:///model.spec",
+                "concept Data {}\nconcept Action { target { type: Data } }",
+            ),
+            (first_uri, first),
+            (second_uri, second),
+        ] {
+            server
+                .dispatch(
+                    "textDocument/didOpen",
+                    &json!({"textDocument": {"uri": uri, "text": text}}),
+                )
+                .unwrap();
+        }
+        let reference = at_line(second_uri, second, 1, "Shared");
+        let definitions = server
+            .dispatch("textDocument/definition", &reference)
+            .unwrap()
+            .unwrap();
+        assert_eq!(definitions.as_array().unwrap().len(), 2);
+        assert_eq!(definitions[0]["uri"], first_uri);
+        assert_eq!(definitions[1]["uri"], second_uri);
+        let references = server
+            .dispatch(
+                "textDocument/references",
+                &json!({"textDocument": {"uri": second_uri},
+                "position": reference["position"],
+                "context": {"includeDeclaration": true}}),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(references.as_array().unwrap().len(), 3);
+        let edit = server
+            .dispatch(
+                "textDocument/rename",
+                &json!({"textDocument": {"uri": second_uri},
+                "position": reference["position"], "newName": "Renamed"}),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            apply_edits(first_uri, first, &edit["changes"][first_uri]),
+            "data Renamed {}"
+        );
+        assert_eq!(
+            apply_edits(second_uri, second, &edit["changes"][second_uri]),
+            "data Renamed {}\naction Use { target: Renamed }"
+        );
+    }
+
+    #[test]
+    fn explicit_boundary_qualifier_names_are_precise_references() {
+        let uri = "file:///model.saml";
+        let model = "scope Alpha {}\nscope Alpha data One {}\nscope [Alpha, Beta] data Two {}";
+        let mut server = Server::new(BufReader::new(Cursor::new(Vec::new())), Vec::new());
+        for (source_uri, text) in [
+            ("file:///model.spec", "boundary Scope {}\nconcept Data {}"),
+            (uri, model),
+        ] {
+            server
+                .dispatch(
+                    "textDocument/didOpen",
+                    &json!({"textDocument": {"uri": source_uri, "text": text}}),
+                )
+                .unwrap();
+        }
+        let qualifier = at_line(uri, model, 2, "Alpha");
+        let definitions = server
+            .dispatch("textDocument/definition", &qualifier)
+            .unwrap()
+            .unwrap();
+        assert_eq!(definitions.as_array().unwrap().len(), 1);
+        assert_eq!(definitions[0]["range"]["start"]["line"], 0);
+        let references = server
+            .dispatch(
+                "textDocument/references",
+                &json!({"textDocument": {"uri": uri},
+                "position": qualifier["position"],
+                "context": {"includeDeclaration": false}}),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(references.as_array().unwrap().len(), 2);
+        let edit = server
+            .dispatch(
+                "textDocument/rename",
+                &json!({"textDocument": {"uri": uri},
+                "position": qualifier["position"], "newName": "Renamed"}),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            apply_edits(uri, model, &edit["changes"][uri]),
+            "scope Renamed {}\nscope Renamed data One {}\nscope [Renamed, Beta] data Two {}"
+        );
+    }
+
+    #[test]
+    fn materialization_rename_rejects_untracked_identifiers() {
+        let uri = "file:///model.saml";
+        let model = "data Shared {}\naction Use { target: Shared note: Mentioned }";
+        let mut server = Server::new(BufReader::new(Cursor::new(Vec::new())), Vec::new());
+        for (source_uri, text) in [
+            (
+                "file:///model.spec",
+                "concept Data {}\nconcept Action { target { type: Data } }",
+            ),
+            (uri, model),
+        ] {
+            server
+                .dispatch(
+                    "textDocument/didOpen",
+                    &json!({"textDocument": {"uri": source_uri, "text": text}}),
+                )
+                .unwrap();
+        }
+        let position = at_line(uri, model, 0, "Shared");
+        let rename = |server: &mut Server<_, _>, new_name| {
+            server.dispatch(
+                "textDocument/rename",
+                &json!({"textDocument": {"uri": uri},
+                    "position": position["position"], "newName": new_name}),
+            )
+        };
+        assert!(rename(&mut server, "Mentioned").is_err());
+        assert!(rename(&mut server, "Renamed").is_ok());
+        server
+            .dispatch(
+                "textDocument/didChange",
+                &json!({"textDocument": {"uri": uri},
+                "contentChanges": [{"text": model.replace("note: Mentioned", "note: Shared") }]}),
+            )
+            .unwrap();
+        assert!(rename(&mut server, "Renamed").is_err());
+    }
+
+    #[test]
+    fn typed_concept_reference_does_not_navigate_to_same_named_materialization() {
+        let spec_uri = "file:///model.spec";
+        let model_uri = "file:///model.saml";
+        let model = "data Data {}\ndata Catalog { item: { type: Data } }";
+        let mut server = Server::new(BufReader::new(Cursor::new(Vec::new())), Vec::new());
+        for (uri, text) in [(spec_uri, "concept Data {}"), (model_uri, model)] {
+            server
+                .dispatch(
+                    "textDocument/didOpen",
+                    &json!({"textDocument": {"uri": uri, "text": text}}),
+                )
+                .unwrap();
+        }
+        let position = at_line(model_uri, model, 1, "Data");
+        let definitions = server
+            .dispatch("textDocument/definition", &position)
+            .unwrap()
+            .unwrap();
+        assert_eq!(definitions.as_array().unwrap().len(), 1);
+        assert_eq!(definitions[0]["uri"], spec_uri);
+        let hover = server
+            .dispatch("textDocument/hover", &position)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            hover["contents"]["value"],
+            "spec vocabulary `data`: concept"
+        );
+    }
+
+    #[test]
+    fn state_declaration_is_not_a_separate_reference_or_rename_target() {
+        let uri = "file:///model.saml";
+        let model = "workflowStage Evaluation { state: Initial }";
+        let mut server = Server::new(BufReader::new(Cursor::new(Vec::new())), Vec::new());
+        for (source_uri, text) in [
+            (
+                "file:///model.spec",
+                "concept State {}\nconcept WorkflowStage { state { type: State } }",
+            ),
+            (uri, model),
+        ] {
+            server
+                .dispatch(
+                    "textDocument/didOpen",
+                    &json!({"textDocument": {"uri": source_uri, "text": text}}),
+                )
+                .unwrap();
+        }
+        let position = at_line(uri, model, 0, "Initial");
+        let references = server
+            .dispatch(
+                "textDocument/references",
+                &json!({"textDocument": {"uri": uri},
+                "position": position["position"],
+                "context": {"includeDeclaration": false}}),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(references, json!([]));
+        let prepared = server
+            .dispatch("textDocument/prepareRename", &position)
+            .unwrap()
+            .unwrap();
+        assert_eq!(prepared, Value::Null);
     }
 
     #[test]

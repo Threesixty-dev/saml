@@ -53,16 +53,20 @@ each occurrence and marks cross-boundary links.
 
 The server supports full-document synchronization, diagnostics, document
 symbols, go to definition, hover, completion, Find All References, and
-workspace-wide Rename Symbol for concepts and boundaries. Press Shift+F12 to
-find uses of `Interface` from either its concept declaration or an `interface`
-model declaration. Press F2 to rename both forms. Typed property
-references and boundary qualifiers update too; materialization names and
-property names are separate symbols and are not renamed by this operation.
-Renames use open unsaved buffers and reject invalid names or collisions.
-`State` is excluded for now because `state:` also creates implicit state
-materializations while serving as a property key.
-Definitions are found across all `.saml` and `.spec` files in the workspace.
-If a name has several declarations, go to definition returns all of them.
+workspace-wide Rename Symbol. Press Shift+F12 to find uses of `Interface` from
+either its concept declaration or an `interface` model declaration. Press F2 to
+rename both forms; typed property references and boundary qualifiers update too.
+
+Materialization names are separate symbols. Go to Definition, hover, references,
+and rename follow the resolved materialization identity, including typed property
+values, binding arguments, `extends`, and explicit boundary qualifiers. Repeated
+declarations of one identity are included together; same-named materializations
+in other scopes are excluded. An unresolved, ambiguous, or inaccessible name
+does not navigate to an arbitrary same-named declaration. Rename uses open
+unsaved buffers and rejects invalid names, workspace collisions of the same
+kind, and names with unresolved or untyped uses. Implicit boundary
+materializations and `state` materializations cannot yet be renamed safely.
+Property names remain separate symbols and do not support rename yet.
 
 The reusable Rust semantic analyzer is in `src/semantic.rs`. It composes spec
 roles, maps workspace materializations, resolves typed references and `extends`
@@ -97,7 +101,7 @@ The example does not determine a complete grammar or type system. In particular:
 
 The semantic analyzer checks references whose target kind is declared in a
 spec property rule or an `extends` clause. It does not yet validate unrestricted
-prose relations or duplicate model declarations.
-Navigation still matches exact names and can return several definitions.
+prose relations or duplicate model declarations. Renaming stops if an untracked
+identifier with the same spelling could be left behind.
 
 Run the tests with `cargo test`.

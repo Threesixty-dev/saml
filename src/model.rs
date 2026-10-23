@@ -221,6 +221,14 @@ impl Document {
             .map(|token| token.value.as_str())
     }
 
+    pub fn identifier_spans(&self, name: &str) -> Vec<(usize, usize)> {
+        self.tokens
+            .iter()
+            .filter(|token| token.kind == TokenKind::Identifier && token.value == name)
+            .map(|token| (token.start, token.end))
+            .collect()
+    }
+
     pub fn property_key_at(&self, offset: usize) -> Option<(&str, &str)> {
         let (index, token) = self.tokens.iter().enumerate().find(|(_, token)| {
             token.kind == TokenKind::Identifier && token.start <= offset && offset < token.end
