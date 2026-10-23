@@ -1,7 +1,7 @@
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashMap};
 
-pub const RESTRICTED_KEYWORDS: &[&str] = &["boundry", "concept", "rule"];
+pub const RESTRICTED_KEYWORDS: &[&str] = &["boundary", "concept", "rule"];
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum VocabularyKind {
@@ -32,7 +32,7 @@ impl Vocabulary {
             let document = Document::new(uri.clone(), text.clone());
             for declaration in document.declarations {
                 let kind = match declaration.kind.as_str() {
-                    "boundry" => VocabularyKind::Boundary,
+                    "boundary" => VocabularyKind::Boundary,
                     "concept" => VocabularyKind::Concept,
                     _ => continue,
                 };
@@ -60,7 +60,7 @@ impl Vocabulary {
 
     pub fn kind_for(&self, word: &str) -> Option<u32> {
         match word {
-            "boundry" | "concept" => Some(5),
+            "boundary" | "concept" => Some(5),
             "rule" => Some(12),
             _ => self.entries.get(word).map(|entries| {
                 if entries
@@ -231,7 +231,7 @@ impl Document {
             } else if self.declarations.iter().any(|declaration| {
                 declaration.name_start == token.start
                     && declaration.name_end == token.end
-                    && matches!(declaration.kind.as_str(), "boundry" | "concept")
+                    && matches!(declaration.kind.as_str(), "boundary" | "concept")
             }) {
                 (1, 1)
             } else if token.value.chars().next().is_some_and(char::is_lowercase)

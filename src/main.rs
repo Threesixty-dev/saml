@@ -589,7 +589,7 @@ mod tests {
             .dispatch(
                 "textDocument/didOpen",
                 &json!({"textDocument": {
-                    "uri": "file:///model.spec", "text": "boundry Scope {}\nconcept Entity {}"
+                    "uri": "file:///model.spec", "text": "boundary Scope {}\nconcept Entity {}"
                 }}),
             )
             .unwrap();
@@ -624,7 +624,7 @@ mod tests {
                 "textDocument/didChange",
                 &json!({
                     "textDocument": {"uri": "file:///model.spec"},
-                    "contentChanges": [{"text": "boundry Scope {}\nconcept Other {}"}]
+                    "contentChanges": [{"text": "boundary Scope {}\nconcept Other {}"}]
                 }),
             )
             .unwrap();
@@ -688,7 +688,7 @@ mod tests {
         }));
         assert!(locations.as_array().unwrap().iter().any(|location| {
             location["uri"] == manifest_uri
-                && location["range"]["start"]["line"] == declaration_line("boundry Entity {")
+                && location["range"]["start"]["line"] == declaration_line("boundary Entity {")
         }));
         let hover = server
             .dispatch("textDocument/hover", &target)

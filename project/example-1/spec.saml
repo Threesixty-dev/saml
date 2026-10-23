@@ -1,19 +1,19 @@
 
 // maybe instead of declaration, this should be a keyword
-// because it is a logical boundry declaration.
-boundry Scope {
+// because it is a logical boundary declaration.
+boundary Scope {
 
 }
 // maybe instead of declaration, this should be a keyword,
-// because it is a technical boundry declaration.
-boundry Application {
+// because it is a technical boundary declaration.
+boundary Application {
 
 }
-// Boundry allows to use access operators: Public/Private
-boundry Entity {}
+// Boundary allows to use access operators: Public/Private
+boundary Entity {}
 
 
-boundry Layer {}
+boundary Layer {}
 
 
 concept Interface {}

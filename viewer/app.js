@@ -153,7 +153,7 @@ function jitter(key, salt) {
 function categoryFor(materialization, concepts) {
   const concept = concepts.get(materialization.kind);
   if (!concept) return 'unknown';
-  return concept.roles.includes('boundry') ? 'boundary' : 'materialization';
+  return concept.roles.includes('boundary') ? 'boundary' : 'materialization';
 }
 
 function buildGraph(data) {

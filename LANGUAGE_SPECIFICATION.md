@@ -2,7 +2,7 @@
 
 Purpose:
 
-SAML is an architectural DLS focused on expressing solutions high level concepts in form of detailed specifications, which can be then interpreted by any LLM for further implementation process. It ensures semantic correctness across boundries, coupling scattered meaning under particular symbol.
+SAML is an architectural DLS focused on expressing solutions high level concepts in form of detailed specifications, which can be then interpreted by any LLM for further implementation process. It ensures semantic correctness across boundaries, coupling scattered meaning under particular symbol.
 
 
 Core components:
@@ -20,7 +20,7 @@ Core components:
 
 Restricted keywords:
 
-boundry
+boundary
 concept
 rule
 
@@ -30,9 +30,9 @@ rule
 
 Spec declarations together define the metamodel.
 
-`concept` introduces a named kind and can define its properties. `boundry` gives a
+`concept` introduces a named kind and can define its properties. `boundary` gives a
 kind boundary behavior and can introduce the kind on its own. These declarations
-compose by name: `concept Entity` and `boundry Entity` describe one `entity`
+compose by name: `concept Entity` and `boundary Entity` describe one `entity`
 vocabulary word with both roles.
 
 A block directly inside a concept declares a property. For example, in

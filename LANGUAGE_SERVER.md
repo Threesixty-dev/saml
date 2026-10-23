@@ -12,19 +12,20 @@ stdin and stdout. The `vscode-saml` extension starts it automatically for
 `*.saml` and `*.spec` files when this repository is open in VS Code. Set
 `saml.serverPath` in VS Code if the binary lives elsewhere.
 
-Only `boundry`, `concept`, and `rule` are built-in keywords. A `.spec` file can
+Only `boundary`, `concept`, and `rule` are built-in keywords. A `.spec` file can
 introduce vocabulary with declarations such as `concept Entity {}` and
-`boundry Scope {}`. These become `entity` and `scope` in model files. Vocabulary
-is workspace-wide: every `.spec` in the open workspace contributes words to all
-model files in that workspace, regardless of directory. For the existing example,
-`spec.saml` is also read as a manifest. VS Code gives built-in keywords and
-spec-defined vocabulary and property names distinct semantic token categories.
+`boundary Scope {}`. These become `entity` and `scope` in model files. The
+former `boundry` spelling produces a rename diagnostic in spec files.
+Vocabulary is workspace-wide: every `.spec` in the open workspace contributes
+words to all model files in that workspace, regardless of directory. For the
+existing example, `spec.saml` is also read as a manifest. VS Code gives built-in
+keywords, spec-defined vocabulary, and property names distinct semantic token categories.
 The static grammar colors comments, strings, names, and punctuation; it does not
 maintain a list of user-defined words. The `samlVocabulary` token falls back to
 the theme's `support.function` color, keeping it visually separate from model
 names that use `entity.name.type`.
 
-`concept Entity` and `boundry Entity` give the same `entity` word two compatible
+`concept Entity` and `boundary Entity` give the same `entity` word two compatible
 roles: concept and boundary. Hover shows both roles, and go to definition
 includes both declarations.
 
@@ -68,7 +69,6 @@ The example does not determine a complete grammar or type system. In particular:
   mandatory? The example uses both `from: Initial` and `from Initial`.
 - Are semicolons optional everywhere, and are multi-line declarations always
   allowed?
-- Is `boundry` the final spelling of the restricted keyword?
 - Are names case-sensitive? `UserPortalFrontEnd` in `infrastructure.saml` differs
   from `UserPortalFrontend` in `applications.saml`.
 

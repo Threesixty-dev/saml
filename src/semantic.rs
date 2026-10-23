@@ -113,7 +113,7 @@ pub fn analyze(sources: &HashMap<String, String>) -> SemanticMap {
             .iter()
             .any(|entry| entry.kind == VocabularyKind::Boundary)
         {
-            roles.push("boundry".to_string());
+            roles.push("boundary".to_string());
         }
         concepts.insert(
             word.clone(),
@@ -136,11 +136,19 @@ pub fn analyze(sources: &HashMap<String, String>) -> SemanticMap {
     let mut findings = Vec::new();
     for document in documents.iter().filter(|doc| is_manifest(&doc.uri)) {
         for declaration in &document.declarations {
-            if declaration.kind == "meta" {
+            let replacement = match declaration.kind.as_str() {
+                "meta" => Some("concept"),
+                "boundry" => Some("boundary"),
+                _ => None,
+            };
+            if let Some(replacement) = replacement {
                 findings.push(Finding {
                     code: "obsolete-keyword".into(),
                     severity: Severity::Error,
-                    message: "Use 'concept' instead of 'meta' in spec declarations".into(),
+                    message: format!(
+                        "Use '{}' instead of '{}' in spec declarations",
+                        replacement, declaration.kind
+                    ),
                     source: span(
                         document,
                         declaration.start,
@@ -296,7 +304,7 @@ pub fn analyze(sources: &HashMap<String, String>) -> SemanticMap {
                     code: "unknown-vocabulary".into(),
                     severity: Severity::Warning,
                     message: format!(
-                        "'{}' has no concept or boundry declaration in this workspace",
+                        "'{}' has no concept or boundary declaration in this workspace",
                         declaration.kind
                     ),
                     source: span(
@@ -811,11 +819,22 @@ mod tests {
     }
 
     #[test]
+    fn misspelled_boundary_keyword_reports_rename() {
+        let sources = HashMap::from([("file:///model.spec".into(), "boundry Entity {}".into())]);
+        let map = analyze(&sources);
+        assert!(map.concepts.is_empty());
+        assert!(map.findings.iter().any(|finding| {
+            finding.code == "obsolete-keyword"
+                && finding.message == "Use 'boundary' instead of 'boundry' in spec declarations"
+        }));
+    }
+
+    #[test]
     fn concept_materializations_compose_with_boundaries_and_cross_scope_links() {
         let sources = HashMap::from([
             (
                 "file:///model.spec".into(),
-                "boundry Scope {}\nboundry Entity {}\nconcept Entity {}\nconcept Action { initiator { type: Entity } }".into(),
+                "boundary Scope {}\nboundary Entity {}\nconcept Entity {}\nconcept Action { initiator { type: Entity } }".into(),
             ),
             (
                 "file:///model.saml".into(),
@@ -828,7 +847,7 @@ mod tests {
             .iter()
             .find(|item| item.word == "entity")
             .unwrap();
-        assert_eq!(entity.roles, ["concept", "boundry"]);
+        assert_eq!(entity.roles, ["concept", "boundary"]);
         let user = map
             .materializations
             .iter()
@@ -851,7 +870,7 @@ mod tests {
     #[test]
     fn extends_resolves_nearest_scope_and_reports_ambiguous_crossings() {
         let sources = HashMap::from([
-            ("file:///model.spec".into(), "boundry Scope {}\nconcept Stage {}".into()),
+            ("file:///model.spec".into(), "boundary Scope {}\nconcept Stage {}".into()),
             (
                 "file:///model.saml".into(),
                 "scope Alpha stage Base {}\nscope Beta stage Base {}\nscope Alpha stage Child extends Base {}\nscope Gamma stage Other extends Base {}".into(),
@@ -893,7 +912,7 @@ mod tests {
         let sources = HashMap::from([
             (
                 "file:///model.spec".into(),
-                "boundry Layer {}\nboundry Scope {}".into(),
+                "boundary Layer {}\nboundary Scope {}".into(),
             ),
             (
                 "file:///model.saml".into(),
@@ -949,7 +968,7 @@ mod tests {
         let sources = HashMap::from([
             (
                 "file:///model.spec".into(),
-                "boundry Scope {}\nconcept Entity {}".into(),
+                "boundary Scope {}\nconcept Entity {}".into(),
             ),
             (
                 "file:///model.saml".into(),
