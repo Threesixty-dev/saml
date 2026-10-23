@@ -88,6 +88,14 @@ pub struct MaterializationParameter {
 pub struct MaterializationOccurrence {
     pub source: SourceSpan,
     pub boundaries: Vec<ScopePart>,
+    pub visibility: Visibility,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Visibility {
+    Public,
+    Private,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -97,6 +105,7 @@ pub struct Link {
     pub to: String,
     pub source: SourceSpan,
     pub crosses_scope: bool,
+    pub crosses_boundary: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -150,6 +159,7 @@ struct PendingLink {
     relation: String,
     from: String,
     source_scope: Vec<ScopePart>,
+    source_boundaries: Vec<ScopePart>,
     target_kind: String,
     target_name: String,
     source: SourceSpan,
@@ -160,6 +170,7 @@ struct PendingBinding {
     property: String,
     target_source: SourceSpan,
     source_scope: Vec<ScopePart>,
+    source_boundaries: Vec<ScopePart>,
     arguments: Vec<ModelAssignment>,
 }
 
@@ -352,6 +363,10 @@ pub fn analyze(sources: &HashMap<String, String>) -> SemanticMap {
             }
             let id = materialization_id(&scope, &declaration.kind, &declaration.name);
             let name_span = span(document, declaration.name_start, declaration.name_end);
+            let mut reference_boundaries = boundary_path.clone();
+            if is_boundary(&vocabulary, &declaration.kind) {
+                push_unique(&mut reference_boundaries, part(declaration));
+            }
             let materialization =
                 materializations
                     .entry(id.clone())
@@ -371,6 +386,7 @@ pub fn analyze(sources: &HashMap<String, String>) -> SemanticMap {
             materialization.occurrences.push(MaterializationOccurrence {
                 source: name_span,
                 boundaries: boundary_path.clone(),
+                visibility: declaration_visibility(document, declaration),
             });
             for boundary in &boundary_path {
                 push_unique(&mut materialization.boundaries, boundary.clone());
@@ -385,6 +401,7 @@ pub fn analyze(sources: &HashMap<String, String>) -> SemanticMap {
                         relation: "boundary".into(),
                         from: id.clone(),
                         source_scope: scope.clone(),
+                        source_boundaries: reference_boundaries.clone(),
                         target_kind: parent_part.kind,
                         target_name: parent_part.name,
                         source: span(document, declaration.start, declaration.name_end),
@@ -434,6 +451,7 @@ pub fn analyze(sources: &HashMap<String, String>) -> SemanticMap {
                     relation: "boundary".into(),
                     from: id.clone(),
                     source_scope: scope.clone(),
+                    source_boundaries: reference_boundaries.clone(),
                     target_kind: qualifier.kind,
                     target_name: qualifier.name,
                     source: span(document, declaration.header_start, declaration.start),
@@ -444,6 +462,7 @@ pub fn analyze(sources: &HashMap<String, String>) -> SemanticMap {
                     relation: "extends".into(),
                     from: id.clone(),
                     source_scope: scope.clone(),
+                    source_boundaries: reference_boundaries.clone(),
                     target_kind: declaration.kind.clone(),
                     target_name: token.value.clone(),
                     source: span(document, token.start, token.end),
@@ -474,6 +493,7 @@ pub fn analyze(sources: &HashMap<String, String>) -> SemanticMap {
                                         relation: format!("property:{}", property.name),
                                         from: id.clone(),
                                         source_scope: context.clone(),
+                                        source_boundaries: reference_boundaries.clone(),
                                         target_kind: value_kind.clone(),
                                         target_name: value.value.clone(),
                                         source: span(document, value.start, value.end),
@@ -486,6 +506,7 @@ pub fn analyze(sources: &HashMap<String, String>) -> SemanticMap {
                                         property: property.name.clone(),
                                         target_source: span(document, target.start, target.end),
                                         source_scope: context.clone(),
+                                        source_boundaries: reference_boundaries.clone(),
                                         arguments,
                                     });
                                 }
@@ -561,6 +582,8 @@ pub fn analyze(sources: &HashMap<String, String>) -> SemanticMap {
         match resolve(&materializations, &reference) {
             Ok(target) => {
                 let from_scope = &materializations[&reference.from].scope;
+                let crosses_boundary = reference.relation != "boundary"
+                    && target_crosses_boundary(target, &reference.source_boundaries);
                 let crosses_scope = reference.relation != "boundary"
                     && from_scope != &target.scope
                     && !target.scope.starts_with(&reference.source_scope);
@@ -570,6 +593,7 @@ pub fn analyze(sources: &HashMap<String, String>) -> SemanticMap {
                     to: target.id.clone(),
                     source: reference.source,
                     crosses_scope,
+                    crosses_boundary,
                 });
             }
             Err(reason) => findings.push(Finding {
@@ -660,6 +684,7 @@ pub fn analyze(sources: &HashMap<String, String>) -> SemanticMap {
                     relation: format!("binding:{}.{}", binding.property, argument.key.value),
                     from: binding.from.clone(),
                     source_scope: binding.source_scope.clone(),
+                    source_boundaries: binding.source_boundaries.clone(),
                     target_kind: parameter.kind.clone(),
                     target_name: token.value.clone(),
                     source: span_from_token(&binding.target_source.uri, token),
@@ -669,12 +694,15 @@ pub fn analyze(sources: &HashMap<String, String>) -> SemanticMap {
                         let from_scope = &materializations[&binding.from].scope;
                         let crosses_scope = from_scope != &materialization.scope
                             && !materialization.scope.starts_with(&binding.source_scope);
+                        let crosses_boundary =
+                            target_crosses_boundary(materialization, &binding.source_boundaries);
                         links.push(Link {
                             relation: reference.relation,
                             from: reference.from,
                             to: materialization.id.clone(),
                             source: reference.source.clone(),
                             crosses_scope,
+                            crosses_boundary,
                         });
                         Some(materialization.id.clone())
                     }
@@ -912,6 +940,16 @@ fn declaration_keyword<'a>(document: &'a Document, declaration: &Declaration) ->
         .position(|token| token.start == declaration.start)?;
     let keyword = &tokens[index];
     (keyword.value == declaration.kind && tokens.get(index + 1)?.value != ":").then_some(keyword)
+}
+
+fn declaration_visibility(document: &Document, declaration: &Declaration) -> Visibility {
+    match document
+        .access_modifier(declaration)
+        .map(|token| token.value.as_str())
+    {
+        Some("Public") => Visibility::Public,
+        _ => Visibility::Private,
+    }
 }
 
 fn boundary_qualifier_tokens<'a>(
@@ -1231,6 +1269,7 @@ enum ResolveError {
     Missing,
     WrongKind,
     Ambiguous,
+    Inaccessible,
 }
 
 impl ResolveError {
@@ -1239,6 +1278,7 @@ impl ResolveError {
             Self::Missing => "unresolved-reference",
             Self::WrongKind => "wrong-reference-kind",
             Self::Ambiguous => "ambiguous-reference",
+            Self::Inaccessible => "inaccessible-reference",
         }
     }
 
@@ -1253,8 +1293,29 @@ impl ResolveError {
                 "'{}' has multiple '{}' materializations visible from this scope",
                 reference.target_name, reference.target_kind
             ),
+            Self::Inaccessible => {
+                format!("'{}' is private to another boundary", reference.target_name)
+            }
         }
     }
+}
+
+fn target_crosses_boundary(target: &Materialization, source: &[ScopePart]) -> bool {
+    !target.implicit
+        && target.occurrences.iter().all(|occurrence| {
+            occurrence
+                .boundaries
+                .iter()
+                .any(|boundary| !source.contains(boundary))
+        })
+}
+
+fn target_accessible(target: &Materialization, source: &[ScopePart]) -> bool {
+    !target_crosses_boundary(target, source)
+        || target
+            .occurrences
+            .iter()
+            .any(|occurrence| occurrence.visibility == Visibility::Public)
 }
 
 fn resolve<'a>(
@@ -1277,7 +1338,18 @@ fn resolve<'a>(
             ResolveError::WrongKind
         });
     }
-    let visible: Vec<&Materialization> = candidates
+    let accessible: Vec<&Materialization> = candidates
+        .iter()
+        .copied()
+        .filter(|materialization| {
+            reference.relation == "boundary"
+                || target_accessible(materialization, &reference.source_boundaries)
+        })
+        .collect();
+    if accessible.is_empty() {
+        return Err(ResolveError::Inaccessible);
+    }
+    let visible: Vec<&Materialization> = accessible
         .iter()
         .copied()
         .filter(|materialization| reference.source_scope.starts_with(&materialization.scope))
@@ -1298,8 +1370,8 @@ fn resolve<'a>(
             Err(ResolveError::Ambiguous)
         };
     }
-    if candidates.len() == 1 {
-        Ok(candidates[0])
+    if accessible.len() == 1 {
+        Ok(accessible[0])
     } else {
         Err(ResolveError::Ambiguous)
     }
@@ -1336,6 +1408,38 @@ mod tests {
             .uses
             .iter()
             .any(|usage| matches!(usage.kind, VocabularyUseKind::Qualifier)));
+        let entry = map
+            .materializations
+            .iter()
+            .find(|item| item.id == "/interface:Public/endpoint:Entry")
+            .unwrap();
+        assert_eq!(entry.occurrences[0].visibility, Visibility::Private);
+    }
+
+    #[test]
+    fn access_modifiers_are_keyword_tokens_only_in_declaration_position() {
+        let spec = "boundary Scope {}\nboundary Interface {}\nconcept Data {}\nconcept Endpoint {}";
+        let model = "scope Alpha Public data Shared {}\ninterface Public endpoint Entry {}";
+        let sources = HashMap::from([("file:///model.spec".into(), spec.into())]);
+        let vocabulary = Vocabulary::from_sources(&sources);
+        let document =
+            Document::with_vocabulary("file:///model.saml".into(), model.into(), &vocabulary);
+        let mut line = 0;
+        let mut column = 0;
+        let mut keyword_positions = Vec::new();
+        for token in document.semantic_tokens().as_chunks::<5>().0 {
+            line += token[0];
+            column = if token[0] == 0 {
+                column + token[1]
+            } else {
+                token[1]
+            };
+            if token[3] == 0 {
+                keyword_positions.push((line, column));
+            }
+        }
+        assert!(keyword_positions.contains(&(0, 12)));
+        assert!(!keyword_positions.contains(&(1, 10)));
     }
 
     #[test]
@@ -1403,7 +1507,7 @@ mod tests {
             ),
             (
                 "file:///model.saml".into(),
-                "scope Identity entity User {}\nscope Article action Publish { initiator: User }".into(),
+                "scope Identity Public entity User {}\nscope Article action Publish { initiator: User }".into(),
             ),
         ]);
         let map = analyze(&sources);
@@ -1428,7 +1532,128 @@ mod tests {
                 && link.from == "/scope:Article/action:Publish"
                 && link.to == user.id
                 && link.crosses_scope
+                && link.crosses_boundary
         }));
+        assert!(map.findings.is_empty(), "{:?}", map.findings);
+    }
+
+    #[test]
+    fn private_materialization_resolves_locally_but_not_across_boundaries() {
+        let map = analyze(&HashMap::from([
+            ("file:///model.spec".into(),
+                "boundary Scope {}\nconcept Data {}\nconcept Action { target { type: Data } }".into()),
+            ("file:///model.saml".into(),
+                "scope Alpha { data Secret {} action Local { target: Secret } }\nscope Beta action Outside { target: Secret }".into()),
+        ]));
+        assert!(map
+            .links
+            .iter()
+            .any(|link| link.relation == "property:target"
+                && link.from == "/scope:Alpha/action:Local"
+                && !link.crosses_boundary));
+        assert!(!map
+            .links
+            .iter()
+            .any(|link| link.relation == "property:target"
+                && link.from == "/scope:Beta/action:Outside"));
+        assert!(map
+            .findings
+            .iter()
+            .any(|finding| finding.code == "inaccessible-reference"
+                && finding.message.contains("Secret")));
+    }
+
+    #[test]
+    fn public_materialization_is_visible_across_boundaries() {
+        let map = analyze(&HashMap::from([
+            (
+                "file:///model.spec".into(),
+                "boundary Scope {}\nconcept Data {}\nconcept Action { target { type: Data } }"
+                    .into(),
+            ),
+            (
+                "file:///model.saml".into(),
+                "scope Alpha Public data Shared {}\nscope Beta action Outside { target: Shared }"
+                    .into(),
+            ),
+        ]));
+        let link = map
+            .links
+            .iter()
+            .find(|link| link.relation == "property:target")
+            .unwrap();
+        assert_eq!(link.to, "/scope:Alpha/data:Shared");
+        assert!(link.crosses_boundary);
+        assert_eq!(
+            map.materializations
+                .iter()
+                .find(|item| item.id == link.to)
+                .unwrap()
+                .occurrences[0]
+                .visibility,
+            Visibility::Public
+        );
+        assert!(map.findings.is_empty(), "{:?}", map.findings);
+    }
+
+    #[test]
+    fn a_layer_still_restricts_access_within_the_same_scope() {
+        let map = analyze(&HashMap::from([
+            ("file:///model.spec".into(),
+                "boundary Scope {}\nboundary Layer {}\nconcept Data {}\nconcept Action { target { type: Data } }".into()),
+            ("file:///model.saml".into(),
+                "layer Infrastructure scope Alpha data Secret {}\nlayer Application scope Alpha action Outside { target: Secret }".into()),
+        ]));
+        assert!(map
+            .findings
+            .iter()
+            .any(|finding| finding.code == "inaccessible-reference"));
+    }
+
+    #[test]
+    fn an_inaccessible_candidate_does_not_hide_a_visible_workspace_candidate() {
+        let map = analyze(&HashMap::from([
+            ("file:///model.spec".into(),
+                "boundary Scope {}\nboundary Layer {}\nconcept Data {}\nconcept Action { target { type: Data } }".into()),
+            ("file:///model.saml".into(),
+                "data Shared {}\nlayer Infrastructure scope Alpha data Shared {}\nlayer Application scope Alpha action Use { target: Shared }".into()),
+        ]));
+        let link = map
+            .links
+            .iter()
+            .find(|link| link.relation == "property:target")
+            .unwrap();
+        assert_eq!(link.to, "/data:Shared");
+        assert!(!link.crosses_boundary);
+        assert!(map.findings.is_empty(), "{:?}", map.findings);
+    }
+
+    #[test]
+    fn explicit_private_stays_local_and_public_crosses_nested_boundaries() {
+        let map = analyze(&HashMap::from([
+            ("file:///model.spec".into(),
+                "boundary Scope {}\nboundary Layer {}\nconcept Data {}\nconcept Action { target { type: Data } }".into()),
+            ("file:///model.saml".into(),
+                "layer Infrastructure scope Alpha { Private data Hidden {} Public data Shared {} action Local { target: Hidden } }\nscope Beta action Outside { target: Shared }".into()),
+        ]));
+        let links: Vec<_> = map
+            .links
+            .iter()
+            .filter(|link| link.relation == "property:target")
+            .collect();
+        assert_eq!(links.len(), 2);
+        assert!(links
+            .iter()
+            .any(|link| link.to == "/scope:Alpha/data:Hidden" && !link.crosses_boundary));
+        assert!(links
+            .iter()
+            .any(|link| link.to == "/scope:Alpha/data:Shared" && link.crosses_boundary));
+        let hidden = map
+            .materializations
+            .iter()
+            .find(|item| item.name == "Hidden")
+            .unwrap();
+        assert_eq!(hidden.occurrences[0].visibility, Visibility::Private);
         assert!(map.findings.is_empty(), "{:?}", map.findings);
     }
 
@@ -1438,7 +1663,7 @@ mod tests {
             ("file:///model.spec".into(), "boundary Scope {}\nconcept Stage {}".into()),
             (
                 "file:///model.saml".into(),
-                "scope Alpha stage Base {}\nscope Beta stage Base {}\nscope Alpha stage Child extends Base {}\nscope Gamma stage Other extends Base {}".into(),
+                "scope Alpha Public stage Base {}\nscope Beta Public stage Base {}\nscope Alpha stage Child extends Base {}\nscope Gamma stage Other extends Base {}".into(),
             ),
         ]);
         let map = analyze(&sources);

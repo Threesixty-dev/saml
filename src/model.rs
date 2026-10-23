@@ -1,5 +1,5 @@
 use serde_json::{json, Value};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 pub const RESTRICTED_KEYWORDS: &[&str] = &["boundary", "concept", "rule"];
 
@@ -149,6 +149,34 @@ impl Document {
         &self.tokens
     }
 
+    pub(crate) fn access_modifier(&self, declaration: &Declaration) -> Option<&Token> {
+        let index = self
+            .tokens
+            .binary_search_by_key(&declaration.start, |token| token.start)
+            .ok()?;
+        let modifier = self.tokens.get(index.checked_sub(1)?)?;
+        if modifier.start < declaration.header_start
+            || !matches!(modifier.value.as_str(), "Public" | "Private")
+        {
+            return None;
+        }
+        // In `interface Public endpoint Entry`, Public names the qualifier.
+        if index >= 2
+            && self
+                .vocabulary
+                .entries
+                .get(&self.tokens[index - 2].value)
+                .is_some_and(|entries| {
+                    entries
+                        .iter()
+                        .any(|entry| entry.kind == VocabularyKind::Boundary)
+                })
+        {
+            return None;
+        }
+        Some(modifier)
+    }
+
     pub fn position(&self, offset: usize) -> Value {
         let offset = offset.min(self.text.len());
         let line = self.line_starts.partition_point(|start| *start <= offset) - 1;
@@ -222,11 +250,18 @@ impl Document {
     pub fn semantic_tokens(&self) -> Vec<u32> {
         let mut data = Vec::new();
         let (mut previous_line, mut previous_character) = (0, 0);
+        let access_modifiers: HashSet<usize> = self
+            .declarations
+            .iter()
+            .filter_map(|declaration| self.access_modifier(declaration).map(|token| token.start))
+            .collect();
         for (index, token) in self.tokens.iter().enumerate() {
             if token.kind != TokenKind::Identifier {
                 continue;
             }
-            let (token_type, modifiers) = if RESTRICTED_KEYWORDS.contains(&token.value.as_str()) {
+            let (token_type, modifiers) = if RESTRICTED_KEYWORDS.contains(&token.value.as_str())
+                || access_modifiers.contains(&token.start)
+            {
                 (0, 0)
             } else if self.declarations.iter().any(|declaration| {
                 declaration.name_start == token.start

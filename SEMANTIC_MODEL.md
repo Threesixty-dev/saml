@@ -42,24 +42,33 @@ The JSON map exposes `concepts`, `materializations`, `links`, `bindings`, and
   kind, name, and lexical scope. Repeated declarations of that identity add
   occurrences with separate source locations and boundary memberships. A
   materialization can declare typed input parameters, including list inputs.
+  Each occurrence records `public` or `private` visibility.
 - **Scopes** follow containing declarations and boundary qualifiers. A `scope`
   or `layer` qualifier can introduce an implicit boundary materialization.
   `layer` membership is recorded without adding a lexical scope level.
 - **Links** record boundary membership, typed properties, and `extends` separately.
   Binding arguments add links to the materializations supplied as input values.
   Reference links outside the source materialization's scope or descendants
-  are marked `crosses_scope`; boundary membership links are not crossings.
+  are marked `crosses_scope`. Links whose target lies outside the source's
+  boundary memberships are marked `crosses_boundary`; boundary membership
+  links are not crossings.
 - **Bindings** record a typed property reference with a local argument block,
   such as `capability: RestApi { expose: [Article, Author] }`. They retain the
   target materialization and the resolved argument values without modifying the
   target.
 - **Findings** have source spans, codes, and error or warning severity.
 
-For unqualified references, the analyzer prefers the nearest containing scope.
-If there is no local or ancestor match, it accepts one unique workspace match
-and records whether the resolved link crosses scopes. Multiple workspace
-matches are ambiguous. This is the current prototype resolution rule; access
-policy between boundaries is still unspecified.
+For unqualified references, the analyzer considers accessible materializations
+and prefers the nearest containing scope. If there is no local or ancestor
+match, it accepts one unique accessible workspace match. Multiple accessible
+matches are ambiguous. A materialization inside a boundary is private by
+default. `Public` immediately before its kind exports it through all containing
+boundaries, for example `layer Infrastructure Public data Article {}`. An
+explicit `Private` has the same behavior as the default. A reference to a
+matching materialization that exists only in another boundary produces an
+`inaccessible-reference` finding. Declarations outside boundaries are visible
+across the workspace. Structural boundary membership links do not require an
+export.
 
 A property rule such as `concept Action { initiator { type: Entity } }` checks that an
 `initiator: Name` value on an `action` materialization resolves to an `entity`
@@ -76,4 +85,4 @@ Unknown vocabulary is a warning while the manifest is being completed.
 The current example has six missing required property findings. For example,
 `UserPortalFrontend` needs a `capability`, and several `workflowStage`
 materializations need a `state`. The analyzer does not yet parse all prose
-relations or enforce Public/Private boundary access.
+relations.

@@ -1,7 +1,7 @@
 
 
 
-scope Identity entity User {
+scope Identity Public entity User {
 
 }
 
@@ -28,8 +28,8 @@ layer Business scope Article {
 
 
 layer Infrastructure scope Article {
-  data Article { }
-  data Author { }
+  Public data Article { }
+  Public data Author { }
 }
 
 

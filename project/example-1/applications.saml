@@ -22,7 +22,7 @@ applicationType SinglePageApplication {
   technology: AngularSPA
 }
 
-layer Infrastructure applicationCapability RestApi {
+layer Infrastructure Public applicationCapability RestApi {
   expose: {
     type: [Data]
   }

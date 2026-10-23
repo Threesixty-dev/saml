@@ -23,7 +23,8 @@ keywords, spec-defined vocabulary, and property names distinct semantic token ca
 The static grammar colors comments, strings, names, and punctuation; it does not
 maintain a list of user-defined words. The `samlVocabulary` token falls back to
 the theme's `support.function` color, keeping it visually separate from model
-names that use `entity.name.type`.
+names that use `entity.name.type`. `Public` and `Private` are highlighted as
+keywords when used as access modifiers before a materialization kind.
 
 `concept Entity` and `boundary Entity` give the same `entity` word two compatible
 roles: concept and boundary. Hover shows both roles, and go to definition
@@ -42,6 +43,13 @@ of `Data` references. A reference with a block, such as
 the `RestApi` materialization for that use. The server checks argument names,
 value shapes, and resolved target kinds. The semantic map records bindings and
 their target links.
+
+Model materializations in a boundary are private by default. Put `Public`
+immediately before the materialization kind to allow references from other
+boundaries, as in `scope Identity Public entity User {}`. `Private` explicitly
+states the default. An inaccessible typed reference produces an
+`inaccessible-reference` diagnostic. The semantic map records visibility on
+each occurrence and marks cross-boundary links.
 
 The server supports full-document synchronization, diagnostics, document
 symbols, go to definition, hover, completion, Find All References, and
@@ -78,8 +86,8 @@ The example does not determine a complete grammar or type system. In particular:
 - When model declarations repeat a name and role, are they extensions of one
   concept, overloads, or errors? `ArticlePublication` and `Article` recur in
   the example.
-- How do `scope`, `layer`, and `application` affect visibility and reference
-  lookup within the workspace?
+- Should boundary kinds beyond `scope` and `layer` participate in lexical lookup
+  differently from their current containment behavior?
 - Which attributes and relations are legal for each declaration, and which are
   mandatory? The example uses both `from: Initial` and `from Initial`.
 - Are semicolons optional everywhere, and are multi-line declarations always
@@ -89,7 +97,7 @@ The example does not determine a complete grammar or type system. In particular:
 
 The semantic analyzer checks references whose target kind is declared in a
 spec property rule or an `extends` clause. It does not yet validate unrestricted
-prose relations, duplicate model declarations, or access across boundaries.
+prose relations or duplicate model declarations.
 Navigation still matches exact names and can return several definitions.
 
 Run the tests with `cargo test`.

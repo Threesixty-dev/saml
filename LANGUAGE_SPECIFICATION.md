@@ -47,6 +47,14 @@ Using a vocabulary word with a name materializes that concept in the model.
 For example, `entity User` is a materialization of `concept Entity`. `extends`
 describes a separate relationship between materializations.
 
+Materializations inside a boundary are private by default. Place `Public`
+immediately before the materialization kind to export it through its containing
+boundaries: `scope Identity Public entity User {}`. `Private` may be written in
+the same position to state the default explicitly. These are access modifiers
+for model declarations, not spec vocabulary. A reference from another boundary
+requires a public target; a reference from the same boundary can use a private
+target. A declaration outside all boundaries remains workspace-visible.
+
 A materialization may declare required inputs. In
 `applicationCapability RestApi { expose: { type: [Data] } }`, `expose` is an input
 whose value must be a list of `Data` materializations. A reference with a block,

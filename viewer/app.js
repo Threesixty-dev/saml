@@ -198,7 +198,7 @@ function buildGraph(data) {
     const key = `${from.id}\u0000${to.id}\u0000${link.relation}`;
     if (edgeKeys.has(key)) continue;
     edgeKeys.add(key);
-    edges.push({ from, to, relation: link.relation, crossesScope: link.crosses_scope });
+    edges.push({ from, to, relation: link.relation, crossesScope: link.crosses_scope, crossesBoundary: link.crosses_boundary });
   }
   relaxLayout();
   document.querySelector('#concept-count').textContent = data.concepts.length;
@@ -530,7 +530,8 @@ function renderSelection() {
       for (const edge of relations.slice(0, 7)) {
         const other = edge.from === selected ? edge.to : edge.from;
         const arrow = edge.from === selected ? '→' : '←';
-        selection.append(element('span', 'detail-line', `${edge.relation} ${arrow} ${other.name}`));
+        const crossing = edge.crossesBoundary ? ' / crosses boundary' : '';
+        selection.append(element('span', 'detail-line', `${edge.relation} ${arrow} ${other.name}${crossing}`));
       }
       if (relations.length > 7) selection.append(element('span', 'detail-line', `+ ${relations.length - 7} more`));
     }
@@ -538,7 +539,8 @@ function renderSelection() {
     if (data.implicit) selection.append(element('span', 'detail-line', 'Inferred from a boundary qualifier'));
     for (const occurrence of data.occurrences.slice(0, 4)) {
       const boundary = occurrence.boundaries.map(part => part.name).join(' · ');
-      selection.append(element('span', 'detail-line', `${fileName(occurrence.source.uri)}${boundary ? ` / ${boundary}` : ''}`));
+      const access = occurrence.boundaries.length ? occurrence.visibility || 'private' : 'workspace';
+      selection.append(element('span', 'detail-line', `${access} / ${fileName(occurrence.source.uri)}${boundary ? ` / ${boundary}` : ''}`));
     }
     if (data.occurrences.length > 4) selection.append(element('span', 'detail-line', `+ ${data.occurrences.length - 4} more`));
   }
