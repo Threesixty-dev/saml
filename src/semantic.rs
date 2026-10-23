@@ -23,6 +23,8 @@ pub struct ConceptProperty {
     pub value_kind: Option<String>,
     pub many: bool,
     pub definition: SourceSpan,
+    pub definitions: Vec<SourceSpan>,
+    pub uses: Vec<SourceSpan>,
     pub value_kind_reference: Option<SourceSpan>,
 }
 
@@ -273,7 +275,7 @@ pub fn analyze(sources: &HashMap<String, String>) -> SemanticMap {
                 }
                 if let Some(previous) = concept
                     .properties
-                    .iter()
+                    .iter_mut()
                     .find(|item| item.name == property.name)
                 {
                     if previous.value_kind != property.value_kind || previous.many != property.many
@@ -288,9 +290,10 @@ pub fn analyze(sources: &HashMap<String, String>) -> SemanticMap {
                                 previous.value_kind.as_deref().unwrap_or("unspecified"),
                                 property.value_kind.as_deref().unwrap_or("unspecified")
                             ),
-                            source: property.definition,
+                            source: property.definition.clone(),
                         });
                     }
+                    previous.definitions.push(property.definition);
                 } else {
                     concept.properties.push(property);
                 }
@@ -474,7 +477,7 @@ pub fn analyze(sources: &HashMap<String, String>) -> SemanticMap {
                     source: span(document, token.start, token.end),
                 });
             }
-            if let Some(concept) = concepts.get(&declaration.kind) {
+            if let Some(concept) = concepts.get_mut(&declaration.kind) {
                 let context = {
                     let mut context = scope;
                     context.push(part(declaration));
@@ -483,9 +486,14 @@ pub fn analyze(sources: &HashMap<String, String>) -> SemanticMap {
                 for assignment in model_properties(document, declaration) {
                     if let Some(property) = concept
                         .properties
-                        .iter()
+                        .iter_mut()
                         .find(|property| property.name == assignment.key.value)
                     {
+                        property.uses.push(span(
+                            document,
+                            assignment.key.start,
+                            assignment.key.end,
+                        ));
                         direct_properties
                             .entry(id.clone())
                             .or_default()
@@ -843,6 +851,18 @@ pub fn analyze(sources: &HashMap<String, String>) -> SemanticMap {
             concept.uses = uses;
         }
     }
+    for concept in concepts.values_mut() {
+        for property in &mut concept.properties {
+            property
+                .definitions
+                .sort_by(|left, right| (&left.uri, left.start).cmp(&(&right.uri, right.start)));
+            property.definitions.dedup();
+            property
+                .uses
+                .sort_by(|left, right| (&left.uri, left.start).cmp(&(&right.uri, right.start)));
+            property.uses.dedup();
+        }
+    }
     for (id, parameters) in parameter_specs {
         if let Some(materialization) = materializations.get_mut(&id) {
             let mut parameters: Vec<_> = parameters
@@ -1097,6 +1117,8 @@ fn spec_properties(document: &Document, declaration: &Declaration) -> Vec<Concep
             value_kind,
             many: value_many,
             definition: span(document, token.start, token.end),
+            definitions: vec![span(document, token.start, token.end)],
+            uses: Vec::new(),
             value_kind_reference,
         });
     }

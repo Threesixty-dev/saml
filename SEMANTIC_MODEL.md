@@ -35,7 +35,10 @@ The JSON map exposes `concepts`, `materializations`, `links`, `bindings`, and
   and reference search.
 - **Properties** belong to concepts. In `concept ApplicationType`, the name
   `environment` declares a property; `Environment` names the kind of
-  materialization that may fill it. The map records both source spans.
+  materialization that may fill it. The map records the first declaration,
+  every repeated declaration, every model assignment, and the value kind's
+  source span. Property references and rename use the declaration and assignment
+  spans, scoped to the owning concept.
 - **Materializations** are named realizations of concepts in model files, such
   as `entity User`. The map also records provisional materializations for
   undeclared vocabulary so findings can point to them. Their identity includes

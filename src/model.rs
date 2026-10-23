@@ -229,21 +229,28 @@ impl Document {
             .collect()
     }
 
-    pub fn property_key_at(&self, offset: usize) -> Option<(&str, &str)> {
-        let (index, token) = self.tokens.iter().enumerate().find(|(_, token)| {
-            token.kind == TokenKind::Identifier && token.start <= offset && offset < token.end
-        })?;
-        if self.tokens.get(index + 1)?.value != ":" {
-            return None;
-        }
-        let owner = self
-            .declarations
+    pub fn top_level_identifier_spans(
+        &self,
+        declaration: &Declaration,
+        name: &str,
+    ) -> Vec<(usize, usize)> {
+        let mut depth = 0usize;
+        let mut spans = Vec::new();
+        for token in self
+            .tokens
             .iter()
-            .filter(|declaration| {
-                declaration.header_end <= token.start && token.start < declaration.end
-            })
-            .max_by_key(|declaration| declaration.start)?;
-        Some((&token.value, &owner.kind))
+            .filter(|token| declaration.header_end <= token.start && token.end <= declaration.end)
+        {
+            match token.value.as_str() {
+                "{" => depth += 1,
+                "}" => depth = depth.saturating_sub(1),
+                _ if depth == 1 && token.kind == TokenKind::Identifier && token.value == name => {
+                    spans.push((token.start, token.end));
+                }
+                _ => {}
+            }
+        }
+        spans
     }
 
     pub fn symbol_tree(&self) -> Vec<Value> {

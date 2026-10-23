@@ -35,7 +35,9 @@ Property names in a concept have their own identity. Hovering `environment` in
 `environment:` assignment returns the property declaration. Hovering or
 navigating from its `type: Environment` value still resolves the `Environment`
 concept. Typed properties are required on materializations, directly or through
-resolved `extends` bases.
+resolved `extends` bases. Find All References and Rename Symbol follow the
+property across `.spec` declarations and model assignments without changing
+same-named properties on other concepts.
 
 `type: [Data]` in a property or materialization input schema requires a list
 of `Data` references. A reference with a block, such as
@@ -66,7 +68,9 @@ does not navigate to an arbitrary same-named declaration. Rename uses open
 unsaved buffers and rejects invalid names, workspace collisions of the same
 kind, and names with unresolved or untyped uses. Implicit boundary
 materializations and `state` materializations cannot yet be renamed safely.
-Property names remain separate symbols and do not support rename yet.
+Property renames reject conflicting rules, collisions and untracked uses in
+their owning concept. A `state:` property key cannot yet be renamed because it
+also participates in the current `state` declaration syntax.
 
 The reusable Rust semantic analyzer is in `src/semantic.rs`. It composes spec
 roles, maps workspace materializations, resolves typed references and `extends`
