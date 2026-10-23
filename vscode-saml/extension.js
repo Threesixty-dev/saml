@@ -186,6 +186,36 @@ async function activate(context) {
         return locations.map(item => new vscode.Location(vscode.Uri.parse(item.uri), asRange(item.range)));
       }
     }),
+    vscode.languages.registerReferenceProvider(selector, {
+      async provideReferences(document, position, context) {
+        const locations = await client.request('textDocument/references', {
+          textDocument: { uri: document.uri.toString() }, position,
+          context: { includeDeclaration: context.includeDeclaration }
+        });
+        return locations.map(item => new vscode.Location(vscode.Uri.parse(item.uri), asRange(item.range)));
+      }
+    }),
+    vscode.languages.registerRenameProvider(selector, {
+      async prepareRename(document, position) {
+        const result = await client.request('textDocument/prepareRename', {
+          textDocument: { uri: document.uri.toString() }, position
+        });
+        if (!result) throw new Error('No renameable SAML concept or boundary here');
+        return { range: asRange(result.range), placeholder: result.placeholder };
+      },
+      async provideRenameEdits(document, position, newName) {
+        const result = await client.request('textDocument/rename', {
+          textDocument: { uri: document.uri.toString() }, position, newName
+        });
+        const edit = new vscode.WorkspaceEdit();
+        for (const [uri, changes] of Object.entries(result.changes || {})) {
+          for (const change of changes) {
+            edit.replace(vscode.Uri.parse(uri), asRange(change.range), change.newText);
+          }
+        }
+        return edit;
+      }
+    }),
     vscode.languages.registerHoverProvider(selector, {
       async provideHover(document, position) {
         const result = await client.request('textDocument/hover', {

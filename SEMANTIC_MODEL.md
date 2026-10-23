@@ -27,7 +27,11 @@ original boundary, property, and `extends` links.
 The JSON map exposes `concepts`, `materializations`, `links`, and `findings`.
 
 - **Concepts** come from spec declarations. `concept Entity` defines the kind
-  and its properties; `boundary Entity` adds a boundary role to the same `entity` word.
+  and its properties; `boundary Entity` adds a boundary role to the same `entity`
+  word. Each concept also records exact source locations where its vocabulary
+  word is used, including model declarations, boundary qualifiers, and typed
+  property references. The editor uses these locations for workspace renames
+  and reference search.
 - **Properties** belong to concepts. In `concept ApplicationType`, the name
   `environment` declares a property; `Environment` names the kind of
   materialization that may fill it. The map records both source spans.

@@ -16,7 +16,7 @@ boundary Entity {}
 boundary Layer {}
 
 
-concept Interface {}
+concept ApplicationInterface {}
 
 concept Technology {}
 

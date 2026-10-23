@@ -31,6 +31,21 @@ pub struct Concept {
     pub roles: Vec<String>,
     pub definitions: Vec<SourceSpan>,
     pub properties: Vec<ConceptProperty>,
+    pub uses: Vec<VocabularyUse>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VocabularyUseKind {
+    Materialization,
+    Qualifier,
+    TypeReference,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct VocabularyUse {
+    pub source: SourceSpan,
+    pub kind: VocabularyUseKind,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -129,11 +144,13 @@ pub fn analyze(sources: &HashMap<String, String>) -> SemanticMap {
                     })
                     .collect(),
                 properties: Vec::new(),
+                uses: Vec::new(),
             },
         );
     }
 
     let mut findings = Vec::new();
+    let mut vocabulary_uses: HashMap<String, Vec<VocabularyUse>> = HashMap::new();
     for document in documents.iter().filter(|doc| is_manifest(&doc.uri)) {
         for declaration in &document.declarations {
             let replacement = match declaration.kind.as_str() {
@@ -165,6 +182,17 @@ pub fn analyze(sources: &HashMap<String, String>) -> SemanticMap {
                 continue;
             };
             for property in spec_properties(document, declaration) {
+                if let (Some(kind), Some(reference)) =
+                    (&property.value_kind, &property.value_kind_reference)
+                {
+                    vocabulary_uses
+                        .entry(kind.clone())
+                        .or_default()
+                        .push(VocabularyUse {
+                            source: reference.clone(),
+                            kind: VocabularyUseKind::TypeReference,
+                        });
+                }
                 if let Some(previous) = concept
                     .properties
                     .iter()
@@ -219,6 +247,26 @@ pub fn analyze(sources: &HashMap<String, String>) -> SemanticMap {
         let mut scopes: Vec<Vec<ScopePart>> = Vec::new();
         let mut boundaries: Vec<Vec<ScopePart>> = Vec::new();
         for declaration in &document.declarations {
+            if concepts.contains_key(&declaration.kind) {
+                if let Some(keyword) = declaration_keyword(document, declaration) {
+                    vocabulary_uses
+                        .entry(declaration.kind.clone())
+                        .or_default()
+                        .push(VocabularyUse {
+                            source: span(document, keyword.start, keyword.end),
+                            kind: VocabularyUseKind::Materialization,
+                        });
+                }
+            }
+            for token in boundary_qualifier_tokens(document, declaration, &vocabulary) {
+                vocabulary_uses
+                    .entry(token.value.clone())
+                    .or_default()
+                    .push(VocabularyUse {
+                        source: span(document, token.start, token.end),
+                        kind: VocabularyUseKind::Qualifier,
+                    });
+            }
             let mut scope = Vec::new();
             let mut boundary_path = Vec::new();
             if let Some(parent) = declaration.parent {
@@ -441,6 +489,15 @@ pub fn analyze(sources: &HashMap<String, String>) -> SemanticMap {
             &right.code,
         ))
     });
+    for (word, mut uses) in vocabulary_uses {
+        if let Some(concept) = concepts.get_mut(&word) {
+            uses.sort_by(|left, right| {
+                (&left.source.uri, left.source.start).cmp(&(&right.source.uri, right.source.start))
+            });
+            uses.dedup_by(|left, right| left.source == right.source);
+            concept.uses = uses;
+        }
+    }
     SemanticMap {
         concepts: concepts.into_values().collect(),
         materializations: materializations.into_values().collect(),
@@ -509,6 +566,37 @@ fn header_tokens<'a>(document: &'a Document, declaration: &Declaration) -> Vec<&
         .iter()
         .filter(|token| {
             token.start >= declaration.header_start && token.end <= declaration.header_end
+        })
+        .collect()
+}
+
+fn declaration_keyword<'a>(document: &'a Document, declaration: &Declaration) -> Option<&'a Token> {
+    let tokens = document.tokens();
+    let index = tokens
+        .iter()
+        .position(|token| token.start == declaration.start)?;
+    let keyword = &tokens[index];
+    (keyword.value == declaration.kind && tokens.get(index + 1)?.value != ":").then_some(keyword)
+}
+
+fn boundary_qualifier_tokens<'a>(
+    document: &'a Document,
+    declaration: &Declaration,
+    vocabulary: &Vocabulary,
+) -> Vec<&'a Token> {
+    let tokens = header_tokens(document, declaration);
+    tokens
+        .iter()
+        .enumerate()
+        .filter_map(|(index, token)| {
+            if token.start >= declaration.start || !is_boundary(vocabulary, &token.value) {
+                return None;
+            }
+            let next = tokens.get(index + 1)?;
+            (next.kind == TokenKind::Identifier
+                && next.value.chars().next().is_some_and(char::is_uppercase)
+                || next.value == "[")
+                .then_some(*token)
         })
         .collect()
 }
@@ -772,6 +860,35 @@ fn resolve<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn vocabulary_uses_keep_definition_type_and_model_roles_separate() {
+        let spec = "boundary Interface {}\nconcept Interface {}\nconcept Endpoint { target { type: Interface } }";
+        let model = "interface RestApi {}\ninterface Public endpoint Entry { target: RestApi }\n// interface Comment\nendpoint Other { note: \"Interface\" }";
+        let map = analyze(&HashMap::from([
+            ("file:///model.spec".into(), spec.into()),
+            ("file:///model.saml".into(), model.into()),
+        ]));
+        let interface = map
+            .concepts
+            .iter()
+            .find(|concept| concept.word == "interface")
+            .unwrap();
+        assert_eq!(interface.definitions.len(), 2);
+        assert_eq!(interface.uses.len(), 3);
+        assert!(interface
+            .uses
+            .iter()
+            .any(|usage| matches!(usage.kind, VocabularyUseKind::TypeReference)));
+        assert!(interface
+            .uses
+            .iter()
+            .any(|usage| matches!(usage.kind, VocabularyUseKind::Materialization)));
+        assert!(interface
+            .uses
+            .iter()
+            .any(|usage| matches!(usage.kind, VocabularyUseKind::Qualifier)));
+    }
 
     #[test]
     fn required_property_can_be_inherited_through_extends() {
