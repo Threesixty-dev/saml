@@ -6,4 +6,6 @@ The project is in its initial stage. Language syntax, tools, and examples will b
 
 An initial [language server](LANGUAGE_SERVER.md) supports editing the evolving `.saml` examples.
 
+The [semantic map](SEMANTIC_MODEL.md) has a Rust analyzer, a JSON CLI, and a local 3D browser viewer.
+
 See [competitors](competitors/README.md) for worked examples of existing modeling approaches.

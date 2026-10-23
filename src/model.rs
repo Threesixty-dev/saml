@@ -1,12 +1,12 @@
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashMap};
 
-pub const RESTRICTED_KEYWORDS: &[&str] = &["boundry", "meta", "rule"];
+pub const RESTRICTED_KEYWORDS: &[&str] = &["boundry", "concept", "rule"];
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum VocabularyKind {
     Boundary,
-    Meta,
+    Concept,
 }
 
 #[derive(Clone)]
@@ -33,7 +33,7 @@ impl Vocabulary {
             for declaration in document.declarations {
                 let kind = match declaration.kind.as_str() {
                     "boundry" => VocabularyKind::Boundary,
-                    "meta" => VocabularyKind::Meta,
+                    "concept" => VocabularyKind::Concept,
                     _ => continue,
                 };
                 let mut chars = declaration.name.chars();
@@ -60,7 +60,7 @@ impl Vocabulary {
 
     pub fn kind_for(&self, word: &str) -> Option<u32> {
         match word {
-            "boundry" | "meta" => Some(5),
+            "boundry" | "concept" => Some(5),
             "rule" => Some(12),
             _ => self.entries.get(word).map(|entries| {
                 if entries
@@ -193,6 +193,23 @@ impl Document {
             .map(|token| token.value.as_str())
     }
 
+    pub fn property_key_at(&self, offset: usize) -> Option<(&str, &str)> {
+        let (index, token) = self.tokens.iter().enumerate().find(|(_, token)| {
+            token.kind == TokenKind::Identifier && token.start <= offset && offset < token.end
+        })?;
+        if self.tokens.get(index + 1)?.value != ":" {
+            return None;
+        }
+        let owner = self
+            .declarations
+            .iter()
+            .filter(|declaration| {
+                declaration.header_end <= token.start && token.start < declaration.end
+            })
+            .max_by_key(|declaration| declaration.start)?;
+        Some((&token.value, &owner.kind))
+    }
+
     pub fn symbol_tree(&self) -> Vec<Value> {
         self.declarations
             .iter()
@@ -205,7 +222,7 @@ impl Document {
     pub fn semantic_tokens(&self) -> Vec<u32> {
         let mut data = Vec::new();
         let (mut previous_line, mut previous_character) = (0, 0);
-        for token in &self.tokens {
+        for (index, token) in self.tokens.iter().enumerate() {
             if token.kind != TokenKind::Identifier {
                 continue;
             }
@@ -214,9 +231,26 @@ impl Document {
             } else if self.declarations.iter().any(|declaration| {
                 declaration.name_start == token.start
                     && declaration.name_end == token.end
-                    && matches!(declaration.kind.as_str(), "boundry" | "meta")
+                    && matches!(declaration.kind.as_str(), "boundry" | "concept")
             }) {
                 (1, 1)
+            } else if token.value.chars().next().is_some_and(char::is_lowercase)
+                && !self
+                    .declarations
+                    .iter()
+                    .any(|declaration| declaration.start == token.start)
+                && self
+                    .tokens
+                    .get(index + 1)
+                    .is_some_and(|next| matches!(next.value.as_str(), ":" | "{"))
+            {
+                let declared = self.declarations.iter().any(|declaration| {
+                    declaration.kind == "concept"
+                        && declaration.header_end <= token.start
+                        && token.start < declaration.end
+                        && self.tokens[index + 1].value == "{"
+                });
+                (2, u32::from(declared))
             } else if self.vocabulary.entries.contains_key(&token.value) {
                 (1, 0)
             } else {

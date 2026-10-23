@@ -123,7 +123,7 @@ async function activate(context) {
         uri: item.uri.toString(), name: item.name
       })),
       capabilities: { textDocument: { semanticTokens: {
-        requests: { full: true }, tokenTypes: ['keyword', 'samlVocabulary'],
+        requests: { full: true }, tokenTypes: ['keyword', 'samlVocabulary', 'property'],
         tokenModifiers: ['declaration'], formats: ['relative']
       } } }
     });
@@ -210,7 +210,7 @@ async function activate(context) {
         });
         return new vscode.SemanticTokens(Uint32Array.from(result.data));
       }
-    }, new vscode.SemanticTokensLegend(['keyword', 'samlVocabulary'], ['declaration']))
+    }, new vscode.SemanticTokensLegend(['keyword', 'samlVocabulary', 'property'], ['declaration']))
   );
   output.appendLine(`SAML server running: ${binary}`);
 }

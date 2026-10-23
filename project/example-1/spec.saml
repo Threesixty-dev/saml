@@ -16,16 +16,37 @@ boundry Entity {}
 boundry Layer {}
 
 
-meta Application {
+concept Interface {}
+
+concept Technology {}
+
+concept Environment {}
+
+concept ApplicationType {
+  environment {
+    type: Environment
+  }
+  technology {
+    type Technology
+  }
+}
+
+concept ApplicationCapability {}
+concept Application {
+  type {
+    type: ApplicationType
+  }
+  capability {
+    type: ApplicationCapability
+  }
+}
+
+concept Event {
 
 }
 
-meta Event {
 
-}
-
-
-meta Entity {
+concept Entity {
   capabilities {
     
   }
@@ -36,34 +57,34 @@ meta Entity {
 
 // maybe rule should be a keyword, instead of just part of a spec model
 // rules are crosslayer concern
-meta Rule {
+concept Rule {
 
 }
 
-meta Action {
+concept Action {
   initiator {
     type: Entity
   }
 }
 
-meta Data {
+concept Data {
 
 }
 
-meta State {
+concept State {
   from {
 
   }
 }
 
 
-meta WorkflowStage {
+concept WorkflowStage {
   state {
     type State
   }
 }
 
-meta Workflow {
+concept Workflow {
   initiator { 
     type:Action
   }
@@ -72,7 +93,7 @@ meta Workflow {
   }
 }
 
-meta Queue {
+concept Queue {
 
 }
 

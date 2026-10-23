@@ -9,21 +9,39 @@ semantic map. `src/main.rs` exposes findings as LSP diagnostics; the standalone
 cargo run --bin saml-map -- project/example-1
 ```
 
+To explore the same map as a 3D graph in a browser, run:
+
+```sh
+cargo run --bin saml-view -- project/example-1
+```
+
+Open `http://127.0.0.1:8787`. The viewer binds only to localhost. Its Refresh
+button rereads saved `.spec` and `.saml` files, so save editor changes first.
+Set `SAML_VIEW_PORT` to use another port. Drag to orbit, scroll to zoom, click a
+node to inspect it, or search by name. Concept-to-materialization lines show
+which spec word each materialization comes from. The JSON map retains the
+original boundary, property, and `extends` links.
+
 ## Map
 
-- **Concepts** come from spec declarations. `meta Entity` supplies the `meta`
-  role and `boundry Entity` supplies the `boundry` role to one `entity` word.
-- **Objects** are named uses of vocabulary words, such as `entity User`, or
-  currently undeclared words found in model files. Their identity includes
-  kind, name, and lexical scope. Repeated declarations of that identity
-  contribute additional occurrences, each with its own source location and
-  boundary memberships.
+The JSON map exposes `concepts`, `materializations`, `links`, and `findings`.
+
+- **Concepts** come from spec declarations. `concept Entity` defines the kind
+  and its properties; `boundry Entity` adds a boundary role to the same `entity` word.
+- **Properties** belong to concepts. In `concept ApplicationType`, the name
+  `environment` declares a property; `Environment` names the kind of
+  materialization that may fill it. The map records both source spans.
+- **Materializations** are named realizations of concepts in model files, such
+  as `entity User`. The map also records provisional materializations for
+  undeclared vocabulary so findings can point to them. Their identity includes
+  kind, name, and lexical scope. Repeated declarations of that identity add
+  occurrences with separate source locations and boundary memberships.
 - **Scopes** follow containing declarations and boundary qualifiers. A `scope`
-  or `layer` qualifier can introduce an implicit boundary object; `layer`
-  membership is recorded without adding a lexical scope level.
-- **Links** record boundary membership, typed fields, and `extends` separately.
-  Reference links outside the source object's scope or descendants are marked
-  `crosses_scope`; boundary membership links are not crossings.
+  or `layer` qualifier can introduce an implicit boundary materialization.
+  `layer` membership is recorded without adding a lexical scope level.
+- **Links** record boundary membership, typed properties, and `extends` separately.
+  Reference links outside the source materialization's scope or descendants
+  are marked `crosses_scope`; boundary membership links are not crossings.
 - **Findings** have source spans, codes, and error or warning severity.
 
 For unqualified references, the analyzer prefers the nearest containing scope.
@@ -32,14 +50,16 @@ and records whether the resolved link crosses scopes. Multiple workspace
 matches are ambiguous. This is the current prototype resolution rule; access
 policy between boundaries is still unspecified.
 
-A field rule such as `meta Action { initiator { type: Entity } }` checks that an
-`initiator: Name` value on an `action` object resolves to an `entity` object.
-`extends Base` resolves to an object of the same kind and creates a separate
-`extends` link. The analyzer checks unknown vocabulary, unresolved or ambiguous
-references, wrong target kinds, and conflicting spec field rules. Unknown
-vocabulary is a warning while the manifest is being completed.
+A property rule such as `concept Action { initiator { type: Entity } }` checks that an
+`initiator: Name` value on an `action` materialization resolves to an `entity`
+materialization. `extends Base` resolves to a materialization of the same kind
+and creates a separate `extends` link. Typed properties are required on each
+materialization, either directly or through resolved `extends` bases. The
+analyzer checks unknown vocabulary, unresolved or ambiguous references, wrong
+value kinds, missing required properties, and conflicting spec property rules.
+Unknown vocabulary is a warning while the manifest is being completed.
 
-The current example has eight unknown-vocabulary warnings because its manifest
-does not yet declare `interface`, `technology`, `environment`,
-`applicationType`, or `applicationCapability`. The analyzer does not yet parse
-all prose relations or enforce Public/Private boundary access.
+The current example has six missing required property findings. For example,
+`UserPortalFrontend` needs a `capability`, and several `workflowStage`
+materializations need a `state`. The analyzer does not yet parse all prose
+relations or enforce Public/Private boundary access.

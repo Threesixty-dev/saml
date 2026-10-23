@@ -1,5 +1,5 @@
 use saml_lsp::model::{Document, Vocabulary, VocabularyKind, RESTRICTED_KEYWORDS};
-use saml_lsp::semantic::{analyze, Severity};
+use saml_lsp::semantic::{analyze, ConceptProperty, SemanticMap, Severity};
 use saml_lsp::workspace::{collect_sources, uri_to_path};
 use serde_json::{json, Value};
 use std::collections::{BTreeSet, HashMap};
@@ -116,7 +116,7 @@ impl<R: BufRead, W: Write> Server<R, W> {
                     "hoverProvider": true,
                     "completionProvider": {},
                     "semanticTokensProvider": {
-                        "legend": {"tokenTypes": ["keyword", "samlVocabulary"],
+                        "legend": {"tokenTypes": ["keyword", "samlVocabulary", "property"],
                                    "tokenModifiers": ["declaration"]},
                         "full": true
                     }
@@ -176,11 +176,20 @@ impl<R: BufRead, W: Write> Server<R, W> {
                 Ok(Some(json!({"data": data})))
             }
             "textDocument/definition" => {
+                let sources = self.workspace_sources();
+                let map = analyze(&sources);
+                if let Some((_, property)) = self.property_at(params, &map) {
+                    if let Some(text) = sources.get(&property.definition.uri) {
+                        let document = Document::new(property.definition.uri.clone(), text.clone());
+                        return Ok(Some(json!([{"uri": property.definition.uri,
+                            "range": document.range(property.definition.start,
+                                                    property.definition.end)}])));
+                    }
+                }
                 let Some(name) = self.target_name(params) else {
                     return Ok(Some(json!([])));
                 };
                 let mut locations = Vec::new();
-                let sources = self.workspace_sources();
                 let vocabulary = Vocabulary::from_sources(&sources);
                 if let Some(entries) = vocabulary.entries.get(&name) {
                     for entry in entries {
@@ -203,18 +212,35 @@ impl<R: BufRead, W: Write> Server<R, W> {
                 Ok(Some(json!(locations)))
             }
             "textDocument/hover" => {
+                let sources = self.workspace_sources();
+                let map = analyze(&sources);
+                if let Some((concept, property)) = self.property_at(params, &map) {
+                    let mut description = format!(
+                        "property `{}` of concept `{}`",
+                        property.name,
+                        upper_initial(concept)
+                    );
+                    if let Some(value_kind) = &property.value_kind {
+                        description.push_str(&format!(
+                            "\n\nRequires a materialization of `{}` (directly or through `extends`).",
+                            upper_initial(value_kind)
+                        ));
+                    }
+                    return Ok(Some(json!({"contents": {"kind": "markdown",
+                        "value": description}})));
+                }
                 let Some(name) = self.target_name(params) else {
                     return Ok(Some(Value::Null));
                 };
-                let vocabulary = Vocabulary::from_sources(&self.workspace_sources());
+                let vocabulary = Vocabulary::from_sources(&sources);
                 let mut descriptions = BTreeSet::new();
                 if let Some(entries) = vocabulary.entries.get(&name) {
                     let mut roles = Vec::new();
                     if entries
                         .iter()
-                        .any(|entry| entry.kind == VocabularyKind::Meta)
+                        .any(|entry| entry.kind == VocabularyKind::Concept)
                     {
-                        roles.push("meta thing");
+                        roles.push("concept");
                     }
                     if entries
                         .iter()
@@ -338,6 +364,34 @@ impl<R: BufRead, W: Write> Server<R, W> {
         document.identifier_at(offset).map(str::to_owned)
     }
 
+    fn property_at<'a>(
+        &self,
+        params: &Value,
+        map: &'a SemanticMap,
+    ) -> Option<(&'a str, &'a ConceptProperty)> {
+        let uri = params["textDocument"]["uri"].as_str()?;
+        let document = self.document(uri)?;
+        let position = &params["position"];
+        let offset = document.offset(position["line"].as_u64()?, position["character"].as_u64()?);
+        for concept in &map.concepts {
+            for property in &concept.properties {
+                if property.definition.uri == uri
+                    && property.definition.start <= offset
+                    && offset < property.definition.end
+                {
+                    return Some((&concept.word, property));
+                }
+            }
+        }
+        let (name, kind) = document.property_key_at(offset)?;
+        let concept = map.concepts.iter().find(|concept| concept.word == kind)?;
+        concept
+            .properties
+            .iter()
+            .find(|property| property.name == name)
+            .map(|property| (concept.word.as_str(), property))
+    }
+
     fn workspace_documents(&self) -> Vec<Document> {
         let sources = self.workspace_sources();
         let vocabulary = Vocabulary::from_sources(&sources);
@@ -361,6 +415,14 @@ impl<R: BufRead, W: Write> Server<R, W> {
     }
 }
 
+fn upper_initial(word: &str) -> String {
+    let mut chars = word.chars();
+    let Some(first) = chars.next() else {
+        return String::new();
+    };
+    first.to_uppercase().collect::<String>() + chars.as_str()
+}
+
 fn main() -> io::Result<()> {
     let stdin = io::stdin();
     let stdout = io::stdout();
@@ -373,6 +435,62 @@ mod tests {
     use saml_lsp::workspace::path_to_uri;
     use std::io::Cursor;
     use std::path::Path;
+
+    #[test]
+    fn property_hover_and_definition_do_not_resolve_to_value_concept() {
+        let spec_uri = "file:///model.spec";
+        let model_uri = "file:///model.saml";
+        let spec = "concept Environment {}\nconcept ApplicationType {\n  environment {\n    type: Environment\n  }\n}";
+        let model =
+            "environment Browser {}\napplicationType ApiService {\n  environment: Browser\n}";
+        let mut server = Server::new(BufReader::new(Cursor::new(Vec::new())), Vec::new());
+        for (uri, text) in [(spec_uri, spec), (model_uri, model)] {
+            server
+                .dispatch(
+                    "textDocument/didOpen",
+                    &json!({"textDocument": {"uri": uri, "text": text}}),
+                )
+                .unwrap();
+        }
+        let spec_property = json!({"textDocument": {"uri": spec_uri},
+            "position": {"line": 2, "character": 4}});
+        let model_property = json!({"textDocument": {"uri": model_uri},
+            "position": {"line": 2, "character": 4}});
+        for position in [&spec_property, &model_property] {
+            let hover = server
+                .dispatch("textDocument/hover", position)
+                .unwrap()
+                .unwrap();
+            assert_eq!(hover["contents"]["value"],
+                "property `environment` of concept `ApplicationType`\n\nRequires a materialization of `Environment` (directly or through `extends`).");
+            let definitions = server
+                .dispatch("textDocument/definition", position)
+                .unwrap()
+                .unwrap();
+            assert_eq!(definitions.as_array().unwrap().len(), 1);
+            assert_eq!(definitions[0]["uri"], spec_uri);
+            assert_eq!(definitions[0]["range"]["start"]["line"], 2);
+        }
+        let value_kind = json!({"textDocument": {"uri": spec_uri},
+            "position": {"line": 3, "character": 11}});
+        let definitions = server
+            .dispatch("textDocument/definition", &value_kind)
+            .unwrap()
+            .unwrap();
+        assert_eq!(definitions[0]["range"]["start"]["line"], 0);
+        let tokens = server
+            .dispatch(
+                "textDocument/semanticTokens/full",
+                &json!({"textDocument": {"uri": spec_uri}}),
+            )
+            .unwrap()
+            .unwrap();
+        assert!(tokens["data"]
+            .as_array()
+            .unwrap()
+            .chunks(5)
+            .any(|token| { token[3] == 2 && token[4] == 1 }));
+    }
 
     #[test]
     fn example_is_structurally_valid() {
@@ -430,7 +548,7 @@ mod tests {
             .dispatch(
                 "textDocument/didOpen",
                 &json!({"textDocument": {
-                    "uri": "file:///model.spec", "text": "meta Entity {}"
+                    "uri": "file:///model.spec", "text": "concept Entity {}"
                 }}),
             )
             .unwrap();
@@ -471,7 +589,7 @@ mod tests {
             .dispatch(
                 "textDocument/didOpen",
                 &json!({"textDocument": {
-                    "uri": "file:///model.spec", "text": "boundry Scope {}\nmeta Entity {}"
+                    "uri": "file:///model.spec", "text": "boundry Scope {}\nconcept Entity {}"
                 }}),
             )
             .unwrap();
@@ -506,7 +624,7 @@ mod tests {
                 "textDocument/didChange",
                 &json!({
                     "textDocument": {"uri": "file:///model.spec"},
-                    "contentChanges": [{"text": "boundry Scope {}\nmeta Other {}"}]
+                    "contentChanges": [{"text": "boundry Scope {}\nconcept Other {}"}]
                 }),
             )
             .unwrap();
@@ -520,7 +638,7 @@ mod tests {
     #[test]
     fn manifest_marks_reserved_word_and_declared_name_separately() {
         let uri = "file:///model.spec".to_string();
-        let text = "meta Entity {}".to_string();
+        let text = "concept Entity {}".to_string();
         let sources = HashMap::from([(uri.clone(), text.clone())]);
         let vocabulary = Vocabulary::from_sources(&sources);
         let document = Document::with_vocabulary(uri, text, &vocabulary);
@@ -531,15 +649,33 @@ mod tests {
     }
 
     #[test]
-    fn entity_composes_meta_and_boundary_roles() {
+    fn entity_composes_concept_and_boundary_roles() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("project/example-1");
         let uri = path_to_uri(&root.join("articles.saml"));
         let manifest_uri = path_to_uri(&root.join("spec.saml"));
+        let articles = std::fs::read_to_string(root.join("articles.saml")).unwrap();
+        let target_line = articles
+            .lines()
+            .position(|line| line.trim_start().starts_with("entity Author"))
+            .unwrap();
+        let target_character = articles
+            .lines()
+            .nth(target_line)
+            .unwrap()
+            .find("entity Author")
+            .unwrap()
+            + 1;
+        let spec = std::fs::read_to_string(root.join("spec.saml")).unwrap();
+        let declaration_line = |prefix: &str| {
+            spec.lines()
+                .position(|line| line.trim_start().starts_with(prefix))
+                .unwrap()
+        };
         let mut server = Server::new(BufReader::new(Cursor::new(Vec::new())), Vec::new());
         server.roots.push(root);
         let target = json!({
             "textDocument": {"uri": uri},
-            "position": {"line": 37, "character": 3}
+            "position": {"line": target_line, "character": target_character}
         });
         let locations = server
             .dispatch("textDocument/definition", &target)
@@ -547,10 +683,12 @@ mod tests {
             .unwrap();
         assert_eq!(locations.as_array().unwrap().len(), 2);
         assert!(locations.as_array().unwrap().iter().any(|location| {
-            location["uri"] == manifest_uri && location["range"]["start"]["line"] == 27
+            location["uri"] == manifest_uri
+                && location["range"]["start"]["line"] == declaration_line("concept Entity {")
         }));
         assert!(locations.as_array().unwrap().iter().any(|location| {
-            location["uri"] == manifest_uri && location["range"]["start"]["line"] == 12
+            location["uri"] == manifest_uri
+                && location["range"]["start"]["line"] == declaration_line("boundry Entity {")
         }));
         let hover = server
             .dispatch("textDocument/hover", &target)
@@ -558,7 +696,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             hover["contents"]["value"],
-            "spec vocabulary `entity`: meta thing and boundary"
+            "spec vocabulary `entity`: concept and boundary"
         );
     }
 
@@ -579,7 +717,7 @@ mod tests {
             .dispatch(
                 "textDocument/didOpen",
                 &json!({"textDocument": {
-                    "uri": "file:///model.spec", "text": "meta Entity {}"
+                    "uri": "file:///model.spec", "text": "concept Entity {}"
                 }}),
             )
             .unwrap();
@@ -591,6 +729,6 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(map["concepts"][0]["word"], "entity");
-        assert_eq!(map["objects"][0]["name"], "Item");
+        assert_eq!(map["materializations"][0]["name"], "Item");
     }
 }

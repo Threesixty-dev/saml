@@ -2,7 +2,7 @@ use crate::model::{
     Declaration, Document, Token, TokenKind, Vocabulary, VocabularyKind, RESTRICTED_KEYWORDS,
 };
 use serde::Serialize;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct SourceSpan {
@@ -18,10 +18,11 @@ pub struct ScopePart {
 }
 
 #[derive(Clone, Debug, Serialize)]
-pub struct FieldRule {
+pub struct ConceptProperty {
     pub name: String,
-    pub target_kind: String,
+    pub value_kind: Option<String>,
     pub definition: SourceSpan,
+    pub value_kind_reference: Option<SourceSpan>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -29,23 +30,23 @@ pub struct Concept {
     pub word: String,
     pub roles: Vec<String>,
     pub definitions: Vec<SourceSpan>,
-    pub fields: Vec<FieldRule>,
+    pub properties: Vec<ConceptProperty>,
 }
 
 #[derive(Clone, Debug, Serialize)]
-pub struct Object {
+pub struct Materialization {
     pub id: String,
     pub kind: String,
     pub name: String,
     pub scope: Vec<ScopePart>,
     pub boundaries: Vec<ScopePart>,
     pub definitions: Vec<SourceSpan>,
-    pub occurrences: Vec<ObjectOccurrence>,
+    pub occurrences: Vec<MaterializationOccurrence>,
     pub implicit: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
-pub struct ObjectOccurrence {
+pub struct MaterializationOccurrence {
     pub source: SourceSpan,
     pub boundaries: Vec<ScopePart>,
 }
@@ -77,7 +78,7 @@ pub struct Finding {
 #[derive(Clone, Debug, Serialize)]
 pub struct SemanticMap {
     pub concepts: Vec<Concept>,
-    pub objects: Vec<Object>,
+    pub materializations: Vec<Materialization>,
     pub links: Vec<Link>,
     pub findings: Vec<Finding>,
 }
@@ -104,9 +105,9 @@ pub fn analyze(sources: &HashMap<String, String>) -> SemanticMap {
         let mut roles = Vec::new();
         if entries
             .iter()
-            .any(|entry| entry.kind == VocabularyKind::Meta)
+            .any(|entry| entry.kind == VocabularyKind::Concept)
         {
-            roles.push("meta".to_string());
+            roles.push("concept".to_string());
         }
         if entries
             .iter()
@@ -127,7 +128,7 @@ pub fn analyze(sources: &HashMap<String, String>) -> SemanticMap {
                         end: entry.end,
                     })
                     .collect(),
-                fields: Vec::new(),
+                properties: Vec::new(),
             },
         );
     }
@@ -135,50 +136,77 @@ pub fn analyze(sources: &HashMap<String, String>) -> SemanticMap {
     let mut findings = Vec::new();
     for document in documents.iter().filter(|doc| is_manifest(&doc.uri)) {
         for declaration in &document.declarations {
-            if declaration.kind != "meta" {
+            if declaration.kind == "meta" {
+                findings.push(Finding {
+                    code: "obsolete-keyword".into(),
+                    severity: Severity::Error,
+                    message: "Use 'concept' instead of 'meta' in spec declarations".into(),
+                    source: span(
+                        document,
+                        declaration.start,
+                        declaration.start + declaration.kind.len(),
+                    ),
+                });
+                continue;
+            }
+            if declaration.kind != "concept" {
                 continue;
             }
             let word = lower_initial(&declaration.name);
             let Some(concept) = concepts.get_mut(&word) else {
                 continue;
             };
-            for field in spec_fields(document, declaration) {
-                if let Some(previous) = concept.fields.iter().find(|item| item.name == field.name) {
-                    if previous.target_kind != field.target_kind {
+            for property in spec_properties(document, declaration) {
+                if let Some(previous) = concept
+                    .properties
+                    .iter()
+                    .find(|item| item.name == property.name)
+                {
+                    if previous.value_kind != property.value_kind {
                         findings.push(Finding {
-                            code: "conflicting-field-rule".into(),
+                            code: "conflicting-property-rule".into(),
                             severity: Severity::Error,
                             message: format!(
-                                "Field '{}' of '{}' has conflicting target kinds '{}' and '{}'",
-                                field.name, word, previous.target_kind, field.target_kind
+                                "Property '{}' of '{}' has conflicting value kinds '{}' and '{}'",
+                                property.name,
+                                word,
+                                previous.value_kind.as_deref().unwrap_or("unspecified"),
+                                property.value_kind.as_deref().unwrap_or("unspecified")
                             ),
-                            source: field.definition,
+                            source: property.definition,
                         });
                     }
                 } else {
-                    concept.fields.push(field);
+                    concept.properties.push(property);
                 }
             }
         }
     }
     for concept in concepts.values() {
-        for field in &concept.fields {
-            if !concepts.contains_key(&field.target_kind) {
+        for property in &concept.properties {
+            let Some(value_kind) = &property.value_kind else {
+                continue;
+            };
+            if !concepts.contains_key(value_kind) {
                 findings.push(Finding {
-                    code: "unknown-field-type".into(),
+                    code: "unknown-property-type".into(),
                     severity: Severity::Error,
                     message: format!(
-                        "Field '{}' refers to undeclared meta '{}'.",
-                        field.name, field.target_kind
+                        "Property '{}' refers to undeclared vocabulary kind '{}'.",
+                        property.name, value_kind
                     ),
-                    source: field.definition.clone(),
+                    source: property
+                        .value_kind_reference
+                        .clone()
+                        .unwrap_or_else(|| property.definition.clone()),
                 });
             }
         }
     }
 
-    let mut objects: BTreeMap<String, Object> = BTreeMap::new();
+    let mut materializations: BTreeMap<String, Materialization> = BTreeMap::new();
     let mut pending = Vec::new();
+    let mut direct_properties: HashMap<String, HashSet<String>> = HashMap::new();
     for document in documents.iter().filter(|doc| !is_manifest(&doc.uri)) {
         let mut scopes: Vec<Vec<ScopePart>> = Vec::new();
         let mut boundaries: Vec<Vec<ScopePart>> = Vec::new();
@@ -201,26 +229,29 @@ pub fn analyze(sources: &HashMap<String, String>) -> SemanticMap {
                 }
                 push_unique(&mut boundary_path, qualifier.clone());
             }
-            let id = object_id(&scope, &declaration.kind, &declaration.name);
+            let id = materialization_id(&scope, &declaration.kind, &declaration.name);
             let name_span = span(document, declaration.name_start, declaration.name_end);
-            let object = objects.entry(id.clone()).or_insert_with(|| Object {
-                id: id.clone(),
-                kind: declaration.kind.clone(),
-                name: declaration.name.clone(),
-                scope: scope.clone(),
-                boundaries: Vec::new(),
-                definitions: Vec::new(),
-                occurrences: Vec::new(),
-                implicit: false,
-            });
-            object.implicit = false;
-            object.definitions.push(name_span.clone());
-            object.occurrences.push(ObjectOccurrence {
+            let materialization =
+                materializations
+                    .entry(id.clone())
+                    .or_insert_with(|| Materialization {
+                        id: id.clone(),
+                        kind: declaration.kind.clone(),
+                        name: declaration.name.clone(),
+                        scope: scope.clone(),
+                        boundaries: Vec::new(),
+                        definitions: Vec::new(),
+                        occurrences: Vec::new(),
+                        implicit: false,
+                    });
+            materialization.implicit = false;
+            materialization.definitions.push(name_span.clone());
+            materialization.occurrences.push(MaterializationOccurrence {
                 source: name_span,
                 boundaries: boundary_path.clone(),
             });
             for boundary in &boundary_path {
-                push_unique(&mut object.boundaries, boundary.clone());
+                push_unique(&mut materialization.boundaries, boundary.clone());
             }
             scopes.push(scope.clone());
             boundaries.push(boundary_path);
@@ -243,10 +274,10 @@ pub fn analyze(sources: &HashMap<String, String>) -> SemanticMap {
                 if !matches!(qualifier.kind.as_str(), "scope" | "layer") {
                     continue;
                 }
-                let boundary_id = object_id(&[], &qualifier.kind, &qualifier.name);
-                objects
+                let boundary_id = materialization_id(&[], &qualifier.kind, &qualifier.name);
+                materializations
                     .entry(boundary_id.clone())
-                    .or_insert_with(|| Object {
+                    .or_insert_with(|| Materialization {
                         id: boundary_id,
                         kind: qualifier.kind.clone(),
                         name: qualifier.name.clone(),
@@ -265,7 +296,7 @@ pub fn analyze(sources: &HashMap<String, String>) -> SemanticMap {
                     code: "unknown-vocabulary".into(),
                     severity: Severity::Warning,
                     message: format!(
-                        "'{}' has no meta or boundry declaration in this workspace",
+                        "'{}' has no concept or boundry declaration in this workspace",
                         declaration.kind
                     ),
                     source: span(
@@ -301,17 +332,26 @@ pub fn analyze(sources: &HashMap<String, String>) -> SemanticMap {
                     context.push(part(declaration));
                     context
                 };
-                for (field, value) in model_fields(document, declaration) {
-                    if let Some(rule) = concept.fields.iter().find(|rule| rule.name == field.value)
+                for (key, value) in model_properties(document, declaration) {
+                    if let Some(property) = concept
+                        .properties
+                        .iter()
+                        .find(|property| property.name == key.value)
                     {
-                        pending.push(PendingLink {
-                            relation: format!("field:{}", rule.name),
-                            from: id.clone(),
-                            source_scope: context.clone(),
-                            target_kind: rule.target_kind.clone(),
-                            target_name: value.value.clone(),
-                            source: span(document, value.start, value.end),
-                        });
+                        direct_properties
+                            .entry(id.clone())
+                            .or_default()
+                            .insert(property.name.clone());
+                        if let Some(value_kind) = &property.value_kind {
+                            pending.push(PendingLink {
+                                relation: format!("property:{}", property.name),
+                                from: id.clone(),
+                                source_scope: context.clone(),
+                                target_kind: value_kind.clone(),
+                                target_name: value.value.clone(),
+                                source: span(document, value.start, value.end),
+                            });
+                        }
                     }
                 }
             }
@@ -320,9 +360,9 @@ pub fn analyze(sources: &HashMap<String, String>) -> SemanticMap {
 
     let mut links = Vec::new();
     for reference in pending {
-        match resolve(&objects, &reference) {
+        match resolve(&materializations, &reference) {
             Ok(target) => {
-                let from_scope = &objects[&reference.from].scope;
+                let from_scope = &materializations[&reference.from].scope;
                 let crosses_scope = reference.relation != "boundary"
                     && from_scope != &target.scope
                     && !target.scope.starts_with(&reference.source_scope);
@@ -342,6 +382,42 @@ pub fn analyze(sources: &HashMap<String, String>) -> SemanticMap {
             }),
         }
     }
+    let mut bases: HashMap<String, Vec<String>> = HashMap::new();
+    for link in &links {
+        if link.relation == "extends" {
+            bases
+                .entry(link.from.clone())
+                .or_default()
+                .push(link.to.clone());
+        }
+    }
+    for materialization in materializations.values().filter(|item| !item.implicit) {
+        let Some(concept) = concepts.get(&materialization.kind) else {
+            continue;
+        };
+        for property in concept
+            .properties
+            .iter()
+            .filter(|item| item.value_kind.is_some())
+        {
+            if !property_present(
+                &materialization.id,
+                &property.name,
+                &direct_properties,
+                &bases,
+            ) {
+                findings.push(Finding {
+                    code: "missing-required-property".into(),
+                    severity: Severity::Error,
+                    message: format!(
+                        "'{}' materialization of '{}' must provide property '{}' directly or through extends",
+                        materialization.name, materialization.kind, property.name
+                    ),
+                    source: materialization.definitions[0].clone(),
+                });
+            }
+        }
+    }
     links.sort_by(|left, right| {
         (&left.from, &left.relation, &left.to, left.source.start).cmp(&(
             &right.from,
@@ -359,7 +435,7 @@ pub fn analyze(sources: &HashMap<String, String>) -> SemanticMap {
     });
     SemanticMap {
         concepts: concepts.into_values().collect(),
-        objects: objects.into_values().collect(),
+        materializations: materializations.into_values().collect(),
         links,
         findings,
     }
@@ -406,7 +482,7 @@ fn is_boundary(vocabulary: &Vocabulary, kind: &str) -> bool {
     })
 }
 
-fn object_id(scope: &[ScopePart], kind: &str, name: &str) -> String {
+fn materialization_id(scope: &[ScopePart], kind: &str, name: &str) -> String {
     let mut id = String::new();
     for part in scope {
         id.push_str(&format!(
@@ -488,10 +564,10 @@ fn header_extends<'a>(document: &'a Document, declaration: &Declaration) -> Vec<
         .collect()
 }
 
-fn spec_fields(document: &Document, declaration: &Declaration) -> Vec<FieldRule> {
+fn spec_properties(document: &Document, declaration: &Declaration) -> Vec<ConceptProperty> {
     let tokens = document.tokens();
     let mut depth = 0;
-    let mut fields = Vec::new();
+    let mut properties = Vec::new();
     for index in 0..tokens.len() {
         let token = &tokens[index];
         if token.start < declaration.header_end || token.end > declaration.end {
@@ -513,6 +589,8 @@ fn spec_fields(document: &Document, declaration: &Declaration) -> Vec<FieldRule>
         }
         let mut field_depth = 1;
         let mut cursor = index + 2;
+        let mut value_kind = None;
+        let mut value_kind_reference = None;
         while cursor < tokens.len() && field_depth > 0 {
             match tokens[cursor].value.as_str() {
                 "{" => field_depth += 1,
@@ -524,28 +602,31 @@ fn spec_fields(document: &Document, declaration: &Declaration) -> Vec<FieldRule>
                         tokens.get(cursor + 1)
                     };
                     if let Some(target) = target.filter(|item| item.kind == TokenKind::Identifier) {
-                        fields.push(FieldRule {
-                            name: token.value.clone(),
-                            target_kind: lower_initial(&target.value),
-                            definition: span(document, target.start, target.end),
-                        });
+                        value_kind = Some(lower_initial(&target.value));
+                        value_kind_reference = Some(span(document, target.start, target.end));
                     }
                 }
                 _ => {}
             }
             cursor += 1;
         }
+        properties.push(ConceptProperty {
+            name: token.value.clone(),
+            value_kind,
+            definition: span(document, token.start, token.end),
+            value_kind_reference,
+        });
     }
-    fields
+    properties
 }
 
-fn model_fields<'a>(
+fn model_properties<'a>(
     document: &'a Document,
     declaration: &Declaration,
 ) -> Vec<(&'a Token, &'a Token)> {
     let tokens = document.tokens();
     let mut depth = 0;
-    let mut fields = Vec::new();
+    let mut properties = Vec::new();
     for index in 0..tokens.len() {
         let token = &tokens[index];
         if token.start < declaration.header_end || token.end > declaration.end {
@@ -570,11 +651,36 @@ fn model_fields<'a>(
                 .get(index + 2)
                 .filter(|next| next.kind == TokenKind::Identifier)
             {
-                fields.push((token, value));
+                properties.push((token, value));
             }
         }
     }
-    fields
+    properties
+}
+
+fn property_present(
+    materialization_id: &str,
+    property_name: &str,
+    direct_properties: &HashMap<String, HashSet<String>>,
+    bases: &HashMap<String, Vec<String>>,
+) -> bool {
+    let mut visited = HashSet::new();
+    let mut pending = vec![materialization_id];
+    while let Some(current) = pending.pop() {
+        if !visited.insert(current) {
+            continue;
+        }
+        if direct_properties
+            .get(current)
+            .is_some_and(|properties| properties.contains(property_name))
+        {
+            return true;
+        }
+        if let Some(parents) = bases.get(current) {
+            pending.extend(parents.iter().map(String::as_str));
+        }
+    }
+    false
 }
 
 enum ResolveError {
@@ -596,11 +702,11 @@ impl ResolveError {
         match self {
             Self::Missing => format!("Cannot resolve '{}'", reference.target_name),
             Self::WrongKind => format!(
-                "'{}' is not a '{}' object",
+                "'{}' is not a '{}' materialization",
                 reference.target_name, reference.target_kind
             ),
             Self::Ambiguous => format!(
-                "'{}' has multiple '{}' objects visible from this scope",
+                "'{}' has multiple '{}' materializations visible from this scope",
                 reference.target_name, reference.target_kind
             ),
         }
@@ -608,17 +714,17 @@ impl ResolveError {
 }
 
 fn resolve<'a>(
-    objects: &'a BTreeMap<String, Object>,
+    materializations: &'a BTreeMap<String, Materialization>,
     reference: &PendingLink,
-) -> Result<&'a Object, ResolveError> {
-    let same_name: Vec<&Object> = objects
+) -> Result<&'a Materialization, ResolveError> {
+    let same_name: Vec<&Materialization> = materializations
         .values()
-        .filter(|object| object.name == reference.target_name)
+        .filter(|materialization| materialization.name == reference.target_name)
         .collect();
-    let candidates: Vec<&Object> = same_name
+    let candidates: Vec<&Materialization> = same_name
         .iter()
         .copied()
-        .filter(|object| object.kind == reference.target_kind)
+        .filter(|materialization| materialization.kind == reference.target_kind)
         .collect();
     if candidates.is_empty() {
         return Err(if same_name.is_empty() {
@@ -627,20 +733,20 @@ fn resolve<'a>(
             ResolveError::WrongKind
         });
     }
-    let visible: Vec<&Object> = candidates
+    let visible: Vec<&Materialization> = candidates
         .iter()
         .copied()
-        .filter(|object| reference.source_scope.starts_with(&object.scope))
+        .filter(|materialization| reference.source_scope.starts_with(&materialization.scope))
         .collect();
     if !visible.is_empty() {
         let closest = visible
             .iter()
-            .map(|object| object.scope.len())
+            .map(|materialization| materialization.scope.len())
             .max()
             .unwrap();
-        let closest: Vec<&Object> = visible
+        let closest: Vec<&Materialization> = visible
             .into_iter()
-            .filter(|object| object.scope.len() == closest)
+            .filter(|materialization| materialization.scope.len() == closest)
             .collect();
         return if closest.len() == 1 {
             Ok(closest[0])
@@ -660,11 +766,56 @@ mod tests {
     use super::*;
 
     #[test]
-    fn meta_instances_compose_with_boundaries_and_cross_scope_links() {
+    fn required_property_can_be_inherited_through_extends() {
+        let spec =
+            "concept Environment {}\nconcept ApplicationType { environment { type: Environment } }";
+        let model = "environment Browser {}\napplicationType Base { environment: Browser }\napplicationType Derived extends Base {}\napplicationType Missing {}";
+        let map = analyze(&HashMap::from([
+            ("file:///model.spec".into(), spec.into()),
+            ("file:///model.saml".into(), model.into()),
+        ]));
+        let property = &map
+            .concepts
+            .iter()
+            .find(|concept| concept.word == "applicationType")
+            .unwrap()
+            .properties[0];
+        assert_eq!(property.name, "environment");
+        assert_eq!(property.value_kind.as_deref(), Some("environment"));
+        assert_eq!(
+            property.definition.start,
+            spec.find("environment {").unwrap()
+        );
+        assert_eq!(
+            property.value_kind_reference.as_ref().unwrap().start,
+            spec.find("type: Environment").unwrap() + "type: ".len()
+        );
+        let missing: Vec<_> = map
+            .findings
+            .iter()
+            .filter(|finding| finding.code == "missing-required-property")
+            .collect();
+        assert_eq!(missing.len(), 1);
+        assert!(missing[0].message.contains("'Missing'"));
+    }
+
+    #[test]
+    fn old_meta_keyword_reports_rename() {
+        let sources = HashMap::from([("file:///model.spec".into(), "meta Entity {}".into())]);
+        let map = analyze(&sources);
+        assert!(map.concepts.is_empty());
+        assert!(map.findings.iter().any(|finding| {
+            finding.code == "obsolete-keyword"
+                && finding.message == "Use 'concept' instead of 'meta' in spec declarations"
+        }));
+    }
+
+    #[test]
+    fn concept_materializations_compose_with_boundaries_and_cross_scope_links() {
         let sources = HashMap::from([
             (
                 "file:///model.spec".into(),
-                "boundry Scope {}\nboundry Entity {}\nmeta Entity {}\nmeta Action { initiator { type: Entity } }".into(),
+                "boundry Scope {}\nboundry Entity {}\nconcept Entity {}\nconcept Action { initiator { type: Entity } }".into(),
             ),
             (
                 "file:///model.saml".into(),
@@ -677,19 +828,19 @@ mod tests {
             .iter()
             .find(|item| item.word == "entity")
             .unwrap();
-        assert_eq!(entity.roles, ["meta", "boundry"]);
+        assert_eq!(entity.roles, ["concept", "boundry"]);
         let user = map
-            .objects
+            .materializations
             .iter()
             .find(|item| item.id == "/scope:Identity/entity:User")
             .unwrap();
         assert_eq!(user.scope[0].name, "Identity");
         assert!(map
-            .objects
+            .materializations
             .iter()
             .any(|item| item.id == "/scope:Identity" && item.implicit));
         assert!(map.links.iter().any(|link| {
-            link.relation == "field:initiator"
+            link.relation == "property:initiator"
                 && link.from == "/scope:Article/action:Publish"
                 && link.to == user.id
                 && link.crosses_scope
@@ -700,7 +851,7 @@ mod tests {
     #[test]
     fn extends_resolves_nearest_scope_and_reports_ambiguous_crossings() {
         let sources = HashMap::from([
-            ("file:///model.spec".into(), "boundry Scope {}\nmeta Stage {}".into()),
+            ("file:///model.spec".into(), "boundry Scope {}\nconcept Stage {}".into()),
             (
                 "file:///model.saml".into(),
                 "scope Alpha stage Base {}\nscope Beta stage Base {}\nscope Alpha stage Child extends Base {}\nscope Gamma stage Other extends Base {}".into(),
@@ -719,11 +870,11 @@ mod tests {
     }
 
     #[test]
-    fn field_rules_enforce_target_meta_kind() {
+    fn property_rules_enforce_target_concept_kind() {
         let sources = HashMap::from([
             (
                 "file:///model.spec".into(),
-                "meta Entity {}\nmeta Action { initiator { type: Entity } }".into(),
+                "concept Entity {}\nconcept Action { initiator { type: Entity } }".into(),
             ),
             (
                 "file:///model.saml".into(),
@@ -738,7 +889,7 @@ mod tests {
     }
 
     #[test]
-    fn repeated_objects_keep_each_boundary_occurrence() {
+    fn repeated_materializations_keep_each_boundary_occurrence() {
         let sources = HashMap::from([
             (
                 "file:///model.spec".into(),
@@ -751,7 +902,7 @@ mod tests {
         ]);
         let map = analyze(&sources);
         let article = map
-            .objects
+            .materializations
             .iter()
             .find(|item| item.id == "/scope:Article")
             .unwrap();
@@ -772,11 +923,11 @@ mod tests {
     }
 
     #[test]
-    fn nested_field_target_stays_in_its_parent_scope() {
+    fn nested_property_target_stays_in_its_parent_scope() {
         let sources = HashMap::from([
             (
                 "file:///model.spec".into(),
-                "meta WorkflowStage { state { type: State } }\nmeta State {}".into(),
+                "concept WorkflowStage { state { type: State } }\nconcept State {}".into(),
             ),
             (
                 "file:///model.saml".into(),
@@ -787,18 +938,18 @@ mod tests {
         let link = map
             .links
             .iter()
-            .find(|link| link.relation == "field:state")
+            .find(|link| link.relation == "property:state")
             .unwrap();
         assert!(!link.crosses_scope);
         assert!(map.findings.is_empty(), "{:?}", map.findings);
     }
 
     #[test]
-    fn nested_object_links_to_parent_boundary() {
+    fn nested_materialization_links_to_parent_boundary() {
         let sources = HashMap::from([
             (
                 "file:///model.spec".into(),
-                "boundry Scope {}\nmeta Entity {}".into(),
+                "boundry Scope {}\nconcept Entity {}".into(),
             ),
             (
                 "file:///model.saml".into(),

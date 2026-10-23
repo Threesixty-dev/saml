@@ -12,21 +12,28 @@ stdin and stdout. The `vscode-saml` extension starts it automatically for
 `*.saml` and `*.spec` files when this repository is open in VS Code. Set
 `saml.serverPath` in VS Code if the binary lives elsewhere.
 
-Only `boundry`, `meta`, and `rule` are built-in keywords. A `.spec` file can
-introduce vocabulary with declarations such as `meta Entity {}` and
+Only `boundry`, `concept`, and `rule` are built-in keywords. A `.spec` file can
+introduce vocabulary with declarations such as `concept Entity {}` and
 `boundry Scope {}`. These become `entity` and `scope` in model files. Vocabulary
 is workspace-wide: every `.spec` in the open workspace contributes words to all
 model files in that workspace, regardless of directory. For the existing example,
 `spec.saml` is also read as a manifest. VS Code gives built-in keywords and
-spec-defined vocabulary distinct semantic token categories. The static grammar
-colors comments, strings, properties, names, and punctuation; it does not
+spec-defined vocabulary and property names distinct semantic token categories.
+The static grammar colors comments, strings, names, and punctuation; it does not
 maintain a list of user-defined words. The `samlVocabulary` token falls back to
 the theme's `support.function` color, keeping it visually separate from model
 names that use `entity.name.type`.
 
-`meta Entity` and `boundry Entity` give the same `entity` word two compatible
-roles: a thing and a boundary. Hover shows both roles, and go to definition
+`concept Entity` and `boundry Entity` give the same `entity` word two compatible
+roles: concept and boundary. Hover shows both roles, and go to definition
 includes both declarations.
+
+Property names in a concept have their own identity. Hovering `environment` in
+`concept ApplicationType` describes that property; go to definition on an
+`environment:` assignment returns the property declaration. Hovering or
+navigating from its `type: Environment` value still resolves the `Environment`
+concept. Typed properties are required on materializations, directly or through
+resolved `extends` bases.
 
 The server supports full-document synchronization, diagnostics, document
 symbols, go to definition, hover, and completion. Definitions are found across
@@ -34,10 +41,11 @@ all `.saml` and `.spec` files in the workspace, including open unsaved buffers.
 If a name has several declarations, go to definition returns all of them.
 
 The reusable Rust semantic analyzer is in `src/semantic.rs`. It composes spec
-roles, creates a workspace object map, resolves typed references and `extends`
+roles, maps workspace materializations, resolves typed references and `extends`
 links, and returns semantic findings to the LSP. Run
 `cargo run --bin saml-map -- project/example-1` to inspect its JSON output.
 The custom LSP request `saml/semanticMap` returns the same map for open buffers.
+Named model elements appear under its `materializations` key.
 See `SEMANTIC_MODEL.md` for the current model and resolution rules.
 
 Diagnostics cover unmatched `{}`, `[]`, `()`, unterminated quoted strings, and
@@ -65,7 +73,7 @@ The example does not determine a complete grammar or type system. In particular:
   from `UserPortalFrontend` in `applications.saml`.
 
 The semantic analyzer checks references whose target kind is declared in a
-spec field rule or an `extends` clause. It does not yet validate unrestricted
+spec property rule or an `extends` clause. It does not yet validate unrestricted
 prose relations, duplicate model declarations, or access across boundaries.
 Navigation still matches exact names and can return several definitions.
 

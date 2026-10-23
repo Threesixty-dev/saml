@@ -10,7 +10,7 @@
       { "name": "constant.character.escape.saml", "match": "\\\\." }
     ] },
     { "name": "variable.other.property.saml", "match": "\\b[a-z][A-Za-z0-9_]*(?=\\s*[:{])" },
-    { "name": "keyword.declaration.saml", "match": "\\b(?:boundry|meta|rule)\\b" },
+    { "name": "keyword.declaration.saml", "match": "\\b(?:boundry|concept|rule)\\b" },
     { "name": "constant.language.saml", "match": "\\b(?:false|successful|true)\\b" },
     { "name": "entity.name.type.saml", "match": "\\b[A-Z][A-Za-z0-9_]*\\b" },
     { "name": "punctuation.separator.saml", "match": "[:,;]" },

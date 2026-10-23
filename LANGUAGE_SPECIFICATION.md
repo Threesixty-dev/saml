@@ -21,19 +21,27 @@ Core components:
 Restricted keywords:
 
 boundry
-meta
+concept
 rule
 
 
 
 2. SPEC manifest
 
-Spec serves as pieces declaration
+Spec declarations together define the metamodel.
 
-`meta` describes a thing. `boundry` marks a boundary. These roles compose for
-the same name: `meta Entity` and `boundry Entity` describe one `entity`
-vocabulary word that is both a thing and a boundary.
+`concept` introduces a named kind and can define its properties. `boundry` gives a
+kind boundary behavior and can introduce the kind on its own. These declarations
+compose by name: `concept Entity` and `boundry Entity` describe one `entity`
+vocabulary word with both roles.
 
-Using a vocabulary word with a name creates an object of that kind, for
-example `entity User` creates a `User` object from `meta Entity`. `extends`
-describes a separate relationship between objects.
+A block directly inside a concept declares a property. For example, in
+`concept ApplicationType { environment { type: Environment } }`, `environment`
+is the property name and `Environment` is the required value's concept. A
+materialization of `ApplicationType` must provide `environment` with an
+`Environment` materialization. A resolved `extends` base may provide it instead.
+Property names belong to their concept; they do not introduce new vocabulary.
+
+Using a vocabulary word with a name materializes that concept in the model.
+For example, `entity User` is a materialization of `concept Entity`. `extends`
+describes a separate relationship between materializations.
