@@ -74,8 +74,21 @@ pub struct Materialization {
     pub boundaries: Vec<ScopePart>,
     pub definitions: Vec<SourceSpan>,
     pub occurrences: Vec<MaterializationOccurrence>,
+    pub fields: Vec<MaterializationField>,
     pub parameters: Vec<MaterializationParameter>,
     pub implicit: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct MaterializationField {
+    pub name: String,
+    pub occurrences: Vec<MaterializationFieldOccurrence>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct MaterializationFieldOccurrence {
+    pub source: SourceSpan,
+    pub fragment: SourceSpan,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -84,6 +97,7 @@ pub struct MaterializationParameter {
     pub kind: String,
     pub many: bool,
     pub source: SourceSpan,
+    pub definitions: Vec<SourceSpan>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -185,6 +199,7 @@ struct ParameterSpec {
     kind: String,
     many: bool,
     source: SourceSpan,
+    definitions: Vec<SourceSpan>,
 }
 
 pub fn analyze(sources: &HashMap<String, String>) -> SemanticMap {
@@ -386,15 +401,32 @@ pub fn analyze(sources: &HashMap<String, String>) -> SemanticMap {
                         boundaries: Vec::new(),
                         definitions: Vec::new(),
                         occurrences: Vec::new(),
+                        fields: Vec::new(),
                         parameters: Vec::new(),
                         implicit: false,
                     });
             materialization.implicit = false;
+            let visibility = declaration_visibility(document, declaration);
+            if materialization
+                .occurrences
+                .first()
+                .is_some_and(|first| first.visibility != visibility)
+            {
+                findings.push(Finding {
+                    code: "conflicting-fragment-visibility".into(),
+                    severity: Severity::Error,
+                    message: format!(
+                        "Fragments of '{}' must agree on Public or Private visibility",
+                        declaration.name
+                    ),
+                    source: name_span.clone(),
+                });
+            }
             materialization.definitions.push(name_span.clone());
             materialization.occurrences.push(MaterializationOccurrence {
-                source: name_span,
+                source: name_span.clone(),
                 boundaries: boundary_path.clone(),
-                visibility: declaration_visibility(document, declaration),
+                visibility,
             });
             for boundary in &boundary_path {
                 push_unique(&mut materialization.boundaries, boundary.clone());
@@ -433,6 +465,7 @@ pub fn analyze(sources: &HashMap<String, String>) -> SemanticMap {
                         boundaries: Vec::new(),
                         definitions: Vec::new(),
                         occurrences: Vec::new(),
+                        fields: Vec::new(),
                         parameters: Vec::new(),
                         implicit: true,
                     });
@@ -484,16 +517,30 @@ pub fn analyze(sources: &HashMap<String, String>) -> SemanticMap {
                     context
                 };
                 for assignment in model_properties(document, declaration) {
+                    let key_source = span(document, assignment.key.start, assignment.key.end);
+                    let repeated_in_new_fragment = record_field(
+                        materializations.get_mut(&id).unwrap(),
+                        &assignment.key.value,
+                        key_source.clone(),
+                        &name_span,
+                    );
                     if let Some(property) = concept
                         .properties
                         .iter_mut()
                         .find(|property| property.name == assignment.key.value)
                     {
-                        property.uses.push(span(
-                            document,
-                            assignment.key.start,
-                            assignment.key.end,
-                        ));
+                        property.uses.push(key_source.clone());
+                        if repeated_in_new_fragment {
+                            findings.push(Finding {
+                                code: "duplicate-fragment-property".into(),
+                                severity: Severity::Error,
+                                message: format!(
+                                    "Property '{}' is assigned in multiple fragments of '{}'",
+                                    property.name, declaration.name
+                                ),
+                                source: key_source.clone(),
+                            });
+                        }
                         direct_properties
                             .entry(id.clone())
                             .or_default()
@@ -552,7 +599,8 @@ pub fn analyze(sources: &HashMap<String, String>) -> SemanticMap {
                                     kind: VocabularyUseKind::TypeReference,
                                 });
                             let parameters = parameter_specs.entry(id.clone()).or_default();
-                            if let Some(previous) = parameters.get(&assignment.key.value) {
+                            if let Some(previous) = parameters.get_mut(&assignment.key.value) {
+                                previous.definitions.push(key_source.clone());
                                 if previous.kind != kind || previous.many != many {
                                     findings.push(Finding {
                                         code: "conflicting-parameter-rule".into(),
@@ -571,7 +619,12 @@ pub fn analyze(sources: &HashMap<String, String>) -> SemanticMap {
                             } else {
                                 parameters.insert(
                                     assignment.key.value.clone(),
-                                    ParameterSpec { kind, many, source },
+                                    ParameterSpec {
+                                        kind,
+                                        many,
+                                        source,
+                                        definitions: vec![key_source],
+                                    },
                                 );
                             }
                         } else if fields.iter().any(|field| field.key.value == "type") {
@@ -586,6 +639,15 @@ pub fn analyze(sources: &HashMap<String, String>) -> SemanticMap {
                             });
                         }
                     }
+                }
+            } else {
+                for assignment in model_properties(document, declaration) {
+                    record_field(
+                        materializations.get_mut(&id).unwrap(),
+                        &assignment.key.value,
+                        span(document, assignment.key.start, assignment.key.end),
+                        &name_span,
+                    );
                 }
             }
         }
@@ -872,10 +934,26 @@ pub fn analyze(sources: &HashMap<String, String>) -> SemanticMap {
                     kind: parameter.kind,
                     many: parameter.many,
                     source: parameter.source,
+                    definitions: parameter.definitions,
                 })
                 .collect();
             parameters.sort_by(|left, right| left.name.cmp(&right.name));
             materialization.parameters = parameters;
+        }
+    }
+    for materialization in materializations.values_mut() {
+        materialization
+            .fields
+            .sort_by(|left, right| left.name.cmp(&right.name));
+        for field in &mut materialization.fields {
+            field.occurrences.sort_by(|left, right| {
+                (&left.source.uri, left.source.start).cmp(&(&right.source.uri, right.source.start))
+            });
+        }
+        for parameter in &mut materialization.parameters {
+            parameter
+                .definitions
+                .sort_by(|left, right| (&left.uri, left.start).cmp(&(&right.uri, right.start)));
         }
     }
     SemanticMap {
@@ -913,6 +991,38 @@ fn span_from_token(uri: &str, token: &Token) -> SourceSpan {
         start: token.start,
         end: token.end,
     }
+}
+
+fn record_field(
+    materialization: &mut Materialization,
+    name: &str,
+    source: SourceSpan,
+    fragment: &SourceSpan,
+) -> bool {
+    let field = match materialization
+        .fields
+        .iter_mut()
+        .find(|field| field.name == name)
+    {
+        Some(field) => field,
+        None => {
+            materialization.fields.push(MaterializationField {
+                name: name.to_string(),
+                occurrences: Vec::new(),
+            });
+            materialization.fields.last_mut().unwrap()
+        }
+    };
+    let repeated_in_new_fragment = !field.occurrences.is_empty()
+        && !field
+            .occurrences
+            .iter()
+            .any(|occurrence| occurrence.fragment == *fragment);
+    field.occurrences.push(MaterializationFieldOccurrence {
+        source,
+        fragment: fragment.clone(),
+    });
+    repeated_in_new_fragment
 }
 
 fn part(declaration: &Declaration) -> ScopePart {
@@ -1340,10 +1450,11 @@ fn target_crosses_boundary(target: &Materialization, source: &[ScopePart]) -> bo
 
 fn target_accessible(target: &Materialization, source: &[ScopePart]) -> bool {
     !target_crosses_boundary(target, source)
-        || target
-            .occurrences
-            .iter()
-            .any(|occurrence| occurrence.visibility == Visibility::Public)
+        || (!target.occurrences.is_empty()
+            && target
+                .occurrences
+                .iter()
+                .all(|occurrence| occurrence.visibility == Visibility::Public))
 }
 
 fn resolve<'a>(
@@ -1894,6 +2005,149 @@ mod tests {
                 .any(|part| part.name == "Infrastructure")
         }));
         assert!(map.findings.is_empty(), "{:?}", map.findings);
+    }
+
+    #[test]
+    fn fragments_merge_distinct_properties_and_keep_each_source() {
+        let map = analyze(&HashMap::from([
+            (
+                "file:///model.spec".into(),
+                "concept Data {}\nconcept Application { primary { type: Data } fallback { type: Data } }".into(),
+            ),
+            (
+                "file:///a.saml".into(),
+                "data One {}\napplication Portal { primary: One }".into(),
+            ),
+            (
+                "file:///b.saml".into(),
+                "application Portal { fallback: One }".into(),
+            ),
+        ]));
+        let portal = map
+            .materializations
+            .iter()
+            .find(|item| item.id == "/application:Portal")
+            .unwrap();
+        assert_eq!(portal.definitions.len(), 2);
+        assert_eq!(portal.fields.len(), 2);
+        for (name, uri) in [
+            ("primary", "file:///a.saml"),
+            ("fallback", "file:///b.saml"),
+        ] {
+            let field = portal
+                .fields
+                .iter()
+                .find(|field| field.name == name)
+                .unwrap();
+            assert_eq!(field.occurrences.len(), 1);
+            assert_eq!(field.occurrences[0].source.uri, uri);
+            assert_eq!(field.occurrences[0].fragment.uri, uri);
+            assert!(map.links.iter().any(|link| {
+                link.from == portal.id && link.relation == format!("property:{name}")
+            }));
+        }
+        assert!(map.findings.is_empty(), "{:?}", map.findings);
+    }
+
+    #[test]
+    fn repeated_typed_property_in_another_fragment_is_an_error() {
+        let map = analyze(&HashMap::from([
+            (
+                "file:///model.spec".into(),
+                "concept Data {}\nconcept Application { target { type: Data } }".into(),
+            ),
+            (
+                "file:///a.saml".into(),
+                "data One {}\napplication Portal { target: One }".into(),
+            ),
+            (
+                "file:///b.saml".into(),
+                "application Portal { target: One }".into(),
+            ),
+        ]));
+        let duplicate = map
+            .findings
+            .iter()
+            .find(|finding| finding.code == "duplicate-fragment-property")
+            .unwrap();
+        assert_eq!(duplicate.source.uri, "file:///b.saml");
+        let portal = map
+            .materializations
+            .iter()
+            .find(|item| item.id == "/application:Portal")
+            .unwrap();
+        assert_eq!(portal.fields[0].occurrences.len(), 2);
+    }
+
+    #[test]
+    fn input_schemas_compose_and_incompatible_fragments_report_a_conflict() {
+        let spec = "concept Data {}\nconcept Capability {}";
+        let first = "capability Rest { expose: { type: Data } }";
+        let second = "capability Rest { timeout: { type: Data } expose: { type: Data } }";
+        let sources = HashMap::from([
+            ("file:///model.spec".into(), spec.into()),
+            ("file:///a.saml".into(), first.into()),
+            ("file:///b.saml".into(), second.into()),
+        ]);
+        let map = analyze(&sources);
+        let rest = map
+            .materializations
+            .iter()
+            .find(|item| item.id == "/capability:Rest")
+            .unwrap();
+        assert_eq!(rest.parameters.len(), 2);
+        assert_eq!(
+            rest.parameters
+                .iter()
+                .find(|parameter| parameter.name == "expose")
+                .unwrap()
+                .definitions
+                .len(),
+            2
+        );
+        assert!(map.findings.is_empty(), "{:?}", map.findings);
+
+        let mut conflict = sources;
+        conflict.insert(
+            "file:///b.saml".into(),
+            second.replace("expose: { type: Data }", "expose: { type: [Data] }"),
+        );
+        let map = analyze(&conflict);
+        assert!(map.findings.iter().any(|finding| {
+            finding.code == "conflicting-parameter-rule" && finding.source.uri == "file:///b.saml"
+        }));
+    }
+
+    #[test]
+    fn fragments_must_agree_on_visibility_before_export() {
+        let spec = "boundary Scope {}\nconcept Data {}\nconcept Action { target { type: Data } }";
+        let first = "scope Alpha Public data Shared {}";
+        let second = "scope Alpha data Shared {}";
+        let action = "action Use { target: Shared }";
+        let sources = HashMap::from([
+            ("file:///model.spec".into(), spec.into()),
+            ("file:///a.saml".into(), first.into()),
+            ("file:///b.saml".into(), second.into()),
+            ("file:///c.saml".into(), action.into()),
+        ]);
+        let map = analyze(&sources);
+        assert!(map.findings.iter().any(|finding| {
+            finding.code == "conflicting-fragment-visibility"
+                && finding.source.uri == "file:///b.saml"
+        }));
+        assert!(map.findings.iter().any(|finding| {
+            finding.code == "inaccessible-reference" && finding.source.uri == "file:///c.saml"
+        }));
+
+        let mut exported = sources;
+        exported.insert("file:///b.saml".into(), first.into());
+        let map = analyze(&exported);
+        assert!(!map.findings.iter().any(|finding| {
+            matches!(
+                finding.code.as_str(),
+                "conflicting-fragment-visibility" | "inaccessible-reference"
+            )
+        }));
     }
 
     #[test]

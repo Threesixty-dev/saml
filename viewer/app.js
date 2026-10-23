@@ -512,6 +512,15 @@ function renderSelection() {
         selection.append(element('span', 'detail-line', `${parameter.name} → ${parameter.many ? `[${kind}]` : kind}`));
       }
     }
+    if (data.fields?.length) {
+      detailLabel(selection, 'FIELDS');
+      for (const field of data.fields) {
+        const files = [...new Set(field.occurrences.map(item => fileName(item.fragment.uri)))];
+        const extra = files.length > 2 ? ` + ${files.length - 2} more` : '';
+        const count = field.occurrences.length > 1 ? ` · ${field.occurrences.length} assignments` : '';
+        selection.append(element('span', 'detail-line', `${field.name}${count} / ${files.slice(0, 2).join(' + ')}${extra}`));
+      }
+    }
     const bindings = (map.bindings || []).filter(binding => binding.from === data.id);
     if (bindings.length) {
       detailLabel(selection, 'BINDINGS');

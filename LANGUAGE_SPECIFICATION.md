@@ -47,6 +47,16 @@ Using a vocabulary word with a name materializes that concept in the model.
 For example, `entity User` is a materialization of `concept Entity`. `extends`
 describes a separate relationship between materializations.
 
+Declarations with the same concept word, name, and lexical scope are fragments
+of one materialization, even when they appear in different files. Distinct
+properties and input declarations compose. Assigning the same declared concept
+property in different fragments is an error. Repeated input declarations must
+agree on their value kind and list cardinality. Fragments must also agree on
+`Public` or `Private` visibility; omitted visibility means `Private`. A
+materialization with conflicting visibility is not exported across boundaries.
+Properties repeated within one fragment are not constrained by this fragment
+rule; their multiplicity still needs a separate language rule.
+
 Materializations inside a boundary are private by default. Place `Public`
 immediately before the materialization kind to export it through its containing
 boundaries: `scope Identity Public entity User {}`. `Private` may be written in

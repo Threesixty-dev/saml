@@ -68,6 +68,9 @@ does not navigate to an arbitrary same-named declaration. Rename uses open
 unsaved buffers and rejects invalid names, workspace collisions of the same
 kind, and names with unresolved or untyped uses. Implicit boundary
 materializations and `state` materializations cannot yet be renamed safely.
+Fragments of one materialization merge distinct properties and compatible input
+schemas. Duplicate declared property assignments across fragments, conflicting
+input schemas, and mixed visibility produce semantic diagnostics.
 Property renames reject conflicting rules, collisions and untracked uses in
 their owning concept. A `state:` property key cannot yet be renamed because it
 also participates in the current `state` declaration syntax.
@@ -91,9 +94,9 @@ symbol when `Scope` is defined. The preceding `layer` is a qualifier.
 
 The example does not determine a complete grammar or type system. In particular:
 
-- When model declarations repeat a name and role, are they extensions of one
-  concept, overloads, or errors? `ArticlePublication` and `Article` recur in
-  the example.
+- Which properties may repeat within one declaration? `state:` and `stage:`
+  occur more than once in the example, while the current spec types do not
+  express that multiplicity.
 - Should boundary kinds beyond `scope` and `layer` participate in lexical lookup
   differently from their current containment behavior?
 - Which attributes and relations are legal for each declaration, and which are
@@ -105,7 +108,7 @@ The example does not determine a complete grammar or type system. In particular:
 
 The semantic analyzer checks references whose target kind is declared in a
 spec property rule or an `extends` clause. It does not yet validate unrestricted
-prose relations or duplicate model declarations. Renaming stops if an untracked
-identifier with the same spelling could be left behind.
+prose relations or repeated assignments within one fragment. Renaming stops if
+an untracked identifier with the same spelling could be left behind.
 
 Run the tests with `cargo test`.

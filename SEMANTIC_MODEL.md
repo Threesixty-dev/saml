@@ -20,7 +20,8 @@ button rereads saved `.spec` and `.saml` files, so save editor changes first.
 Set `SAML_VIEW_PORT` to use another port. Drag to orbit, scroll to zoom, click a
 node to inspect it, or search by name. Concept-to-materialization lines show
 which spec word each materialization comes from. The JSON map retains the
-original boundary, property, and `extends` links.
+original boundary, property, and `extends` links. Selecting a materialization
+also shows its merged fields and the files that contribute them.
 
 ## Map
 
@@ -45,7 +46,9 @@ The JSON map exposes `concepts`, `materializations`, `links`, `bindings`, and
   kind, name, and lexical scope. Repeated declarations of that identity add
   occurrences with separate source locations and boundary memberships. A
   materialization can declare typed input parameters, including list inputs.
-  Each occurrence records `public` or `private` visibility.
+  Each occurrence records `public` or `private` visibility. The merged `fields`
+  group assignment keys, and each field occurrence points to its declaration
+  fragment. Repeated compatible input schemas retain all definition locations.
 - **Scopes** follow containing declarations and boundary qualifiers. A `scope`
   or `layer` qualifier can introduce an implicit boundary materialization.
   `layer` membership is recorded without adding a lexical scope level.
@@ -72,7 +75,8 @@ explicit `Private` has the same behavior as the default. A reference to a
 matching materialization that exists only in another boundary produces an
 `inaccessible-reference` finding. Declarations outside boundaries are visible
 across the workspace. Structural boundary membership links do not require an
-export.
+export. Fragments of one materialization must agree on visibility; a target
+crossing a boundary is exported only when every fragment is `Public`.
 
 The editor uses resolved link targets as symbol identities for materialization
 navigation, reference search, and rename. It can distinguish equal names in
@@ -89,7 +93,12 @@ analyzer checks unknown vocabulary, unresolved or ambiguous references, wrong
 value kinds, missing required properties, and conflicting spec property rules.
 `type: [Entity]` accepts a list of `entity` references. Materialization input
 schemas also check missing, unknown, or duplicate binding arguments and value
-shape mismatches.
+shape mismatches. Distinct declared properties on fragments of the same
+materialization compose. A property assigned in multiple fragments produces a
+`duplicate-fragment-property` error. Incompatible input types produce
+`conflicting-parameter-rule`, and mixed visibility produces
+`conflicting-fragment-visibility`. Untyped prose fields appear in the merged
+field list but are not yet checked for duplicates.
 Unknown vocabulary is a warning while the manifest is being completed.
 
 The current example has six missing required property findings. For example,
