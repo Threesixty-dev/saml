@@ -490,7 +490,8 @@ function renderSelection() {
       detailLabel(selection, 'PROPERTIES');
       for (const property of data.properties) {
         const kind = property.value_kind;
-        const value = kind ? `${property.name} → ${kind[0].toUpperCase()}${kind.slice(1)}` : property.name;
+        const typed = kind && `${kind[0].toUpperCase()}${kind.slice(1)}`;
+        const value = kind ? `${property.name} → ${property.many ? `[${typed}]` : typed}` : property.name;
         selection.append(element('span', 'detail-line', value));
       }
     }
@@ -503,6 +504,24 @@ function renderSelection() {
       const chips = element('div', 'chips');
       for (const part of data.boundaries) chips.append(element('span', 'chip', `${part.kind} ${part.name}`));
       selection.append(chips);
+    }
+    if (data.parameters?.length) {
+      detailLabel(selection, 'INPUTS');
+      for (const parameter of data.parameters) {
+        const kind = `${parameter.kind[0].toUpperCase()}${parameter.kind.slice(1)}`;
+        selection.append(element('span', 'detail-line', `${parameter.name} → ${parameter.many ? `[${kind}]` : kind}`));
+      }
+    }
+    const bindings = (map.bindings || []).filter(binding => binding.from === data.id);
+    if (bindings.length) {
+      detailLabel(selection, 'BINDINGS');
+      for (const binding of bindings) {
+        const target = nodes.find(node => node.id === `materialization:${binding.target}`);
+        selection.append(element('span', 'detail-line', `${binding.property} → ${target?.name || binding.target}`));
+        for (const argument of binding.arguments) {
+          selection.append(element('span', 'detail-line', `${argument.name}: ${argument.values.map(value => value.name).join(', ')}`));
+        }
+      }
     }
     const related = edges.filter(edge => edge.from === selected || edge.to === selected);
     const relations = related.filter(edge => edge.relation !== 'materializes');

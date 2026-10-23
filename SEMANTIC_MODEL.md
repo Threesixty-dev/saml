@@ -24,7 +24,8 @@ original boundary, property, and `extends` links.
 
 ## Map
 
-The JSON map exposes `concepts`, `materializations`, `links`, and `findings`.
+The JSON map exposes `concepts`, `materializations`, `links`, `bindings`, and
+`findings`.
 
 - **Concepts** come from spec declarations. `concept Entity` defines the kind
   and its properties; `boundary Entity` adds a boundary role to the same `entity`
@@ -39,13 +40,19 @@ The JSON map exposes `concepts`, `materializations`, `links`, and `findings`.
   as `entity User`. The map also records provisional materializations for
   undeclared vocabulary so findings can point to them. Their identity includes
   kind, name, and lexical scope. Repeated declarations of that identity add
-  occurrences with separate source locations and boundary memberships.
+  occurrences with separate source locations and boundary memberships. A
+  materialization can declare typed input parameters, including list inputs.
 - **Scopes** follow containing declarations and boundary qualifiers. A `scope`
   or `layer` qualifier can introduce an implicit boundary materialization.
   `layer` membership is recorded without adding a lexical scope level.
 - **Links** record boundary membership, typed properties, and `extends` separately.
+  Binding arguments add links to the materializations supplied as input values.
   Reference links outside the source materialization's scope or descendants
   are marked `crosses_scope`; boundary membership links are not crossings.
+- **Bindings** record a typed property reference with a local argument block,
+  such as `capability: RestApi { expose: [Article, Author] }`. They retain the
+  target materialization and the resolved argument values without modifying the
+  target.
 - **Findings** have source spans, codes, and error or warning severity.
 
 For unqualified references, the analyzer prefers the nearest containing scope.
@@ -61,6 +68,9 @@ and creates a separate `extends` link. Typed properties are required on each
 materialization, either directly or through resolved `extends` bases. The
 analyzer checks unknown vocabulary, unresolved or ambiguous references, wrong
 value kinds, missing required properties, and conflicting spec property rules.
+`type: [Entity]` accepts a list of `entity` references. Materialization input
+schemas also check missing, unknown, or duplicate binding arguments and value
+shape mismatches.
 Unknown vocabulary is a warning while the manifest is being completed.
 
 The current example has six missing required property findings. For example,

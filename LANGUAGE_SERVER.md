@@ -36,6 +36,13 @@ navigating from its `type: Environment` value still resolves the `Environment`
 concept. Typed properties are required on materializations, directly or through
 resolved `extends` bases.
 
+`type: [Data]` in a property or materialization input schema requires a list
+of `Data` references. A reference with a block, such as
+`capability: RestApi { expose: [Article, Author] }`, binds inputs declared on
+the `RestApi` materialization for that use. The server checks argument names,
+value shapes, and resolved target kinds. The semantic map records bindings and
+their target links.
+
 The server supports full-document synchronization, diagnostics, document
 symbols, go to definition, hover, completion, Find All References, and
 workspace-wide Rename Symbol for concepts and boundaries. Press Shift+F12 to

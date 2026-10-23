@@ -341,7 +341,9 @@ impl<R: BufRead, W: Write> Server<R, W> {
                     );
                     if let Some(value_kind) = &property.value_kind {
                         description.push_str(&format!(
-                            "\n\nRequires a materialization of `{}` (directly or through `extends`).",
+                            "\n\nRequires {} materialization{} of `{}` (directly or through `extends`).",
+                            if property.many { "a list of" } else { "a" },
+                            if property.many { "s" } else { "" },
                             upper_initial(value_kind)
                         ));
                     }

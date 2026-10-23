@@ -21,8 +21,23 @@ pub struct ScopePart {
 pub struct ConceptProperty {
     pub name: String,
     pub value_kind: Option<String>,
+    pub many: bool,
     pub definition: SourceSpan,
     pub value_kind_reference: Option<SourceSpan>,
+}
+
+#[derive(Clone)]
+struct ModelAssignment {
+    key: Token,
+    value: PropertyValue,
+}
+
+#[derive(Clone)]
+enum PropertyValue {
+    Reference(Token),
+    List(Vec<Token>, bool),
+    Record(Vec<ModelAssignment>),
+    Binding(Token, Vec<ModelAssignment>),
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -57,7 +72,16 @@ pub struct Materialization {
     pub boundaries: Vec<ScopePart>,
     pub definitions: Vec<SourceSpan>,
     pub occurrences: Vec<MaterializationOccurrence>,
+    pub parameters: Vec<MaterializationParameter>,
     pub implicit: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct MaterializationParameter {
+    pub name: String,
+    pub kind: String,
+    pub many: bool,
+    pub source: SourceSpan,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -73,6 +97,29 @@ pub struct Link {
     pub to: String,
     pub source: SourceSpan,
     pub crosses_scope: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct Binding {
+    pub from: String,
+    pub property: String,
+    pub target: String,
+    pub source: SourceSpan,
+    pub arguments: Vec<BindingArgument>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct BindingArgument {
+    pub name: String,
+    pub source: SourceSpan,
+    pub values: Vec<BindingValue>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct BindingValue {
+    pub name: String,
+    pub target: Option<String>,
+    pub source: SourceSpan,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -95,6 +142,7 @@ pub struct SemanticMap {
     pub concepts: Vec<Concept>,
     pub materializations: Vec<Materialization>,
     pub links: Vec<Link>,
+    pub bindings: Vec<Binding>,
     pub findings: Vec<Finding>,
 }
 
@@ -104,6 +152,20 @@ struct PendingLink {
     source_scope: Vec<ScopePart>,
     target_kind: String,
     target_name: String,
+    source: SourceSpan,
+}
+
+struct PendingBinding {
+    from: String,
+    property: String,
+    target_source: SourceSpan,
+    source_scope: Vec<ScopePart>,
+    arguments: Vec<ModelAssignment>,
+}
+
+struct ParameterSpec {
+    kind: String,
+    many: bool,
     source: SourceSpan,
 }
 
@@ -198,7 +260,8 @@ pub fn analyze(sources: &HashMap<String, String>) -> SemanticMap {
                     .iter()
                     .find(|item| item.name == property.name)
                 {
-                    if previous.value_kind != property.value_kind {
+                    if previous.value_kind != property.value_kind || previous.many != property.many
+                    {
                         findings.push(Finding {
                             code: "conflicting-property-rule".into(),
                             severity: Severity::Error,
@@ -242,7 +305,9 @@ pub fn analyze(sources: &HashMap<String, String>) -> SemanticMap {
 
     let mut materializations: BTreeMap<String, Materialization> = BTreeMap::new();
     let mut pending = Vec::new();
+    let mut pending_bindings = Vec::new();
     let mut direct_properties: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut parameter_specs: HashMap<String, HashMap<String, ParameterSpec>> = HashMap::new();
     for document in documents.iter().filter(|doc| !is_manifest(&doc.uri)) {
         let mut scopes: Vec<Vec<ScopePart>> = Vec::new();
         let mut boundaries: Vec<Vec<ScopePart>> = Vec::new();
@@ -298,6 +363,7 @@ pub fn analyze(sources: &HashMap<String, String>) -> SemanticMap {
                         boundaries: Vec::new(),
                         definitions: Vec::new(),
                         occurrences: Vec::new(),
+                        parameters: Vec::new(),
                         implicit: false,
                     });
             materialization.implicit = false;
@@ -341,6 +407,7 @@ pub fn analyze(sources: &HashMap<String, String>) -> SemanticMap {
                         boundaries: Vec::new(),
                         definitions: Vec::new(),
                         occurrences: Vec::new(),
+                        parameters: Vec::new(),
                         implicit: true,
                     });
             }
@@ -388,24 +455,99 @@ pub fn analyze(sources: &HashMap<String, String>) -> SemanticMap {
                     context.push(part(declaration));
                     context
                 };
-                for (key, value) in model_properties(document, declaration) {
+                for assignment in model_properties(document, declaration) {
                     if let Some(property) = concept
                         .properties
                         .iter()
-                        .find(|property| property.name == key.value)
+                        .find(|property| property.name == assignment.key.value)
                     {
                         direct_properties
                             .entry(id.clone())
                             .or_default()
                             .insert(property.name.clone());
                         if let Some(value_kind) = &property.value_kind {
-                            pending.push(PendingLink {
-                                relation: format!("property:{}", property.name),
-                                from: id.clone(),
-                                source_scope: context.clone(),
-                                target_kind: value_kind.clone(),
-                                target_name: value.value.clone(),
-                                source: span(document, value.start, value.end),
+                            if let Some(references) =
+                                value_references(&assignment.value, property.many)
+                            {
+                                for value in references {
+                                    pending.push(PendingLink {
+                                        relation: format!("property:{}", property.name),
+                                        from: id.clone(),
+                                        source_scope: context.clone(),
+                                        target_kind: value_kind.clone(),
+                                        target_name: value.value.clone(),
+                                        source: span(document, value.start, value.end),
+                                    });
+                                }
+                                if let PropertyValue::Binding(target, arguments) = assignment.value
+                                {
+                                    pending_bindings.push(PendingBinding {
+                                        from: id.clone(),
+                                        property: property.name.clone(),
+                                        target_source: span(document, target.start, target.end),
+                                        source_scope: context.clone(),
+                                        arguments,
+                                    });
+                                }
+                            } else {
+                                findings.push(Finding {
+                                    code: "wrong-property-shape".into(),
+                                    severity: Severity::Error,
+                                    message: format!(
+                                        "Property '{}' requires {} reference{}",
+                                        property.name,
+                                        if property.many { "a list of" } else { "one" },
+                                        if property.many { "s" } else { "" }
+                                    ),
+                                    source: span(
+                                        document,
+                                        assignment.key.start,
+                                        assignment.key.end,
+                                    ),
+                                });
+                            }
+                        }
+                    } else if let PropertyValue::Record(fields) = &assignment.value {
+                        if let Some((kind, many, source)) = parameter_type(fields, document) {
+                            vocabulary_uses
+                                .entry(kind.clone())
+                                .or_default()
+                                .push(VocabularyUse {
+                                    source: source.clone(),
+                                    kind: VocabularyUseKind::TypeReference,
+                                });
+                            let parameters = parameter_specs.entry(id.clone()).or_default();
+                            if let Some(previous) = parameters.get(&assignment.key.value) {
+                                if previous.kind != kind || previous.many != many {
+                                    findings.push(Finding {
+                                        code: "conflicting-parameter-rule".into(),
+                                        severity: Severity::Error,
+                                        message: format!(
+                                            "Parameter '{}' has conflicting types",
+                                            assignment.key.value
+                                        ),
+                                        source: span(
+                                            document,
+                                            assignment.key.start,
+                                            assignment.key.end,
+                                        ),
+                                    });
+                                }
+                            } else {
+                                parameters.insert(
+                                    assignment.key.value.clone(),
+                                    ParameterSpec { kind, many, source },
+                                );
+                            }
+                        } else if fields.iter().any(|field| field.key.value == "type") {
+                            findings.push(Finding {
+                                code: "invalid-parameter-type".into(),
+                                severity: Severity::Error,
+                                message: format!(
+                                    "Input '{}' needs one type, or a one-element type list",
+                                    assignment.key.value
+                                ),
+                                source: span(document, assignment.key.start, assignment.key.end),
                             });
                         }
                     }
@@ -436,6 +578,172 @@ pub fn analyze(sources: &HashMap<String, String>) -> SemanticMap {
                 message: reason.message(&reference),
                 source: reference.source,
             }),
+        }
+    }
+    for parameters in parameter_specs.values() {
+        for (name, parameter) in parameters {
+            if !concepts.contains_key(&parameter.kind) {
+                findings.push(Finding {
+                    code: "unknown-parameter-type".into(),
+                    severity: Severity::Error,
+                    message: format!(
+                        "Parameter '{}' refers to undeclared kind '{}'",
+                        name, parameter.kind
+                    ),
+                    source: parameter.source.clone(),
+                });
+            }
+        }
+    }
+    let mut bindings = Vec::new();
+    for binding in &pending_bindings {
+        let relation = format!("property:{}", binding.property);
+        let Some(target_link) = links
+            .iter()
+            .find(|link| {
+                link.from == binding.from
+                    && link.relation == relation
+                    && link.source == binding.target_source
+            })
+            .cloned()
+        else {
+            continue;
+        };
+        let parameters = parameter_specs.get(&target_link.to);
+        let mut seen = HashSet::new();
+        let mut arguments = Vec::new();
+        for argument in &binding.arguments {
+            let source = span_from_token(&binding.target_source.uri, &argument.key);
+            if !seen.insert(&argument.key.value) {
+                findings.push(Finding {
+                    code: "duplicate-binding-argument".into(),
+                    severity: Severity::Error,
+                    message: format!("Binding argument '{}' is repeated", argument.key.value),
+                    source,
+                });
+                continue;
+            }
+            let Some(parameter) = parameters.and_then(|items| items.get(&argument.key.value))
+            else {
+                findings.push(Finding {
+                    code: "unknown-binding-argument".into(),
+                    severity: Severity::Error,
+                    message: format!(
+                        "'{}' is not an input of '{}'",
+                        argument.key.value, materializations[&target_link.to].name
+                    ),
+                    source,
+                });
+                continue;
+            };
+            let references = match &argument.value {
+                PropertyValue::Binding(_, _) => None,
+                value => value_references(value, parameter.many),
+            };
+            let Some(references) = references else {
+                findings.push(Finding {
+                    code: "wrong-binding-shape".into(),
+                    severity: Severity::Error,
+                    message: format!(
+                        "Input '{}' requires {} reference{}",
+                        argument.key.value,
+                        if parameter.many { "a list of" } else { "one" },
+                        if parameter.many { "s" } else { "" }
+                    ),
+                    source,
+                });
+                continue;
+            };
+            let mut values = Vec::new();
+            for token in references {
+                let reference = PendingLink {
+                    relation: format!("binding:{}.{}", binding.property, argument.key.value),
+                    from: binding.from.clone(),
+                    source_scope: binding.source_scope.clone(),
+                    target_kind: parameter.kind.clone(),
+                    target_name: token.value.clone(),
+                    source: span_from_token(&binding.target_source.uri, token),
+                };
+                let target = match resolve(&materializations, &reference) {
+                    Ok(materialization) => {
+                        let from_scope = &materializations[&binding.from].scope;
+                        let crosses_scope = from_scope != &materialization.scope
+                            && !materialization.scope.starts_with(&binding.source_scope);
+                        links.push(Link {
+                            relation: reference.relation,
+                            from: reference.from,
+                            to: materialization.id.clone(),
+                            source: reference.source.clone(),
+                            crosses_scope,
+                        });
+                        Some(materialization.id.clone())
+                    }
+                    Err(reason) => {
+                        findings.push(Finding {
+                            code: reason.code().into(),
+                            severity: Severity::Error,
+                            message: reason.message(&reference),
+                            source: reference.source.clone(),
+                        });
+                        None
+                    }
+                };
+                values.push(BindingValue {
+                    name: token.value.clone(),
+                    target,
+                    source: reference.source,
+                });
+            }
+            arguments.push(BindingArgument {
+                name: argument.key.value.clone(),
+                source,
+                values,
+            });
+        }
+        if let Some(parameters) = parameters {
+            for name in parameters.keys().filter(|name| !seen.contains(*name)) {
+                findings.push(Finding {
+                    code: "missing-binding-argument".into(),
+                    severity: Severity::Error,
+                    message: format!(
+                        "Binding to '{}' must provide input '{}'",
+                        materializations[&target_link.to].name, name
+                    ),
+                    source: binding.target_source.clone(),
+                });
+            }
+        }
+        bindings.push(Binding {
+            from: binding.from.clone(),
+            property: binding.property.clone(),
+            target: target_link.to.clone(),
+            source: binding.target_source.clone(),
+            arguments,
+        });
+    }
+    for link in links
+        .iter()
+        .filter(|link| link.relation.starts_with("property:"))
+    {
+        let Some(parameters) = parameter_specs.get(&link.to) else {
+            continue;
+        };
+        if pending_bindings
+            .iter()
+            .any(|binding| binding.from == link.from && binding.target_source == link.source)
+        {
+            continue;
+        }
+        for name in parameters.keys() {
+            findings.push(Finding {
+                code: "missing-binding-argument".into(),
+                severity: Severity::Error,
+                message: format!(
+                    "Binding to '{}' must provide input '{}'",
+                    materializations[&link.to].name, name
+                ),
+                source: link.source.clone(),
+            });
         }
     }
     let mut bases: HashMap<String, Vec<String>> = HashMap::new();
@@ -482,6 +790,9 @@ pub fn analyze(sources: &HashMap<String, String>) -> SemanticMap {
             right.source.start,
         ))
     });
+    bindings.sort_by(|left, right| {
+        (&left.source.uri, left.source.start).cmp(&(&right.source.uri, right.source.start))
+    });
     findings.sort_by(|left, right| {
         (&left.source.uri, left.source.start, &left.code).cmp(&(
             &right.source.uri,
@@ -498,10 +809,26 @@ pub fn analyze(sources: &HashMap<String, String>) -> SemanticMap {
             concept.uses = uses;
         }
     }
+    for (id, parameters) in parameter_specs {
+        if let Some(materialization) = materializations.get_mut(&id) {
+            let mut parameters: Vec<_> = parameters
+                .into_iter()
+                .map(|(name, parameter)| MaterializationParameter {
+                    name,
+                    kind: parameter.kind,
+                    many: parameter.many,
+                    source: parameter.source,
+                })
+                .collect();
+            parameters.sort_by(|left, right| left.name.cmp(&right.name));
+            materialization.parameters = parameters;
+        }
+    }
     SemanticMap {
         concepts: concepts.into_values().collect(),
         materializations: materializations.into_values().collect(),
         links,
+        bindings,
         findings,
     }
 }
@@ -523,6 +850,14 @@ fn span(document: &Document, start: usize, end: usize) -> SourceSpan {
         uri: document.uri.clone(),
         start,
         end,
+    }
+}
+
+fn span_from_token(uri: &str, token: &Token) -> SourceSpan {
+    SourceSpan {
+        uri: uri.to_string(),
+        start: token.start,
+        end: token.end,
     }
 }
 
@@ -686,19 +1021,26 @@ fn spec_properties(document: &Document, declaration: &Declaration) -> Vec<Concep
         let mut field_depth = 1;
         let mut cursor = index + 2;
         let mut value_kind = None;
+        let mut value_many = false;
         let mut value_kind_reference = None;
         while cursor < tokens.len() && field_depth > 0 {
             match tokens[cursor].value.as_str() {
                 "{" => field_depth += 1,
                 "}" => field_depth -= 1,
                 "type" if field_depth == 1 => {
-                    let target = if tokens.get(cursor + 1).is_some_and(|next| next.value == ":") {
-                        tokens.get(cursor + 2)
+                    let next = if tokens.get(cursor + 1).is_some_and(|next| next.value == ":") {
+                        cursor + 2
                     } else {
-                        tokens.get(cursor + 1)
+                        cursor + 1
+                    };
+                    let (target, many) = if tokens.get(next).is_some_and(|item| item.value == "[") {
+                        (tokens.get(next + 1), true)
+                    } else {
+                        (tokens.get(next), false)
                     };
                     if let Some(target) = target.filter(|item| item.kind == TokenKind::Identifier) {
                         value_kind = Some(lower_initial(&target.value));
+                        value_many = many;
                         value_kind_reference = Some(span(document, target.start, target.end));
                     }
                 }
@@ -709,6 +1051,7 @@ fn spec_properties(document: &Document, declaration: &Declaration) -> Vec<Concep
         properties.push(ConceptProperty {
             name: token.value.clone(),
             value_kind,
+            many: value_many,
             definition: span(document, token.start, token.end),
             value_kind_reference,
         });
@@ -716,42 +1059,147 @@ fn spec_properties(document: &Document, declaration: &Declaration) -> Vec<Concep
     properties
 }
 
-fn model_properties<'a>(
-    document: &'a Document,
-    declaration: &Declaration,
-) -> Vec<(&'a Token, &'a Token)> {
+fn model_properties(document: &Document, declaration: &Declaration) -> Vec<ModelAssignment> {
     let tokens = document.tokens();
-    let mut depth = 0;
-    let mut properties = Vec::new();
-    for index in 0..tokens.len() {
-        let token = &tokens[index];
-        if token.start < declaration.header_end || token.end > declaration.end {
+    let Some(open) = tokens
+        .iter()
+        .position(|token| token.start == declaration.header_end && token.value == "{")
+    else {
+        return Vec::new();
+    };
+    let end = tokens
+        .iter()
+        .position(|token| token.end == declaration.end && token.value == "}")
+        .unwrap_or(tokens.len());
+    let mut cursor = open + 1;
+    parse_assignments(tokens, &mut cursor, end)
+}
+
+fn value_references(value: &PropertyValue, many: bool) -> Option<Vec<&Token>> {
+    match (value, many) {
+        (PropertyValue::Reference(token), false) | (PropertyValue::Binding(token, _), false) => {
+            Some(vec![token])
+        }
+        (PropertyValue::List(tokens, true), true) if !tokens.is_empty() => {
+            Some(tokens.iter().collect())
+        }
+        _ => None,
+    }
+}
+
+fn parameter_type(
+    fields: &[ModelAssignment],
+    document: &Document,
+) -> Option<(String, bool, SourceSpan)> {
+    let value = &fields.iter().find(|field| field.key.value == "type")?.value;
+    let (token, many) = match value {
+        PropertyValue::Reference(token) => (token, false),
+        PropertyValue::List(tokens, true) if tokens.len() == 1 => (&tokens[0], true),
+        _ => return None,
+    };
+    Some((
+        lower_initial(&token.value),
+        many,
+        span(document, token.start, token.end),
+    ))
+}
+
+fn parse_assignments(tokens: &[Token], cursor: &mut usize, end: usize) -> Vec<ModelAssignment> {
+    let mut assignments = Vec::new();
+    while *cursor < end {
+        if tokens[*cursor].value == "}" {
+            *cursor += 1;
+            break;
+        }
+        if tokens[*cursor].kind == TokenKind::Identifier
+            && tokens
+                .get(*cursor + 1)
+                .is_some_and(|next| next.value == ":")
+        {
+            let key = tokens[*cursor].clone();
+            *cursor += 2;
+            if let Some(value) = parse_property_value(tokens, cursor, end) {
+                assignments.push(ModelAssignment { key, value });
+            }
             continue;
         }
-        match token.value.as_str() {
-            "{" => {
-                depth += 1;
-                continue;
-            }
-            "}" => {
-                depth -= 1;
-                continue;
-            }
-            _ => {}
-        }
-        if depth == 1
-            && token.kind == TokenKind::Identifier
-            && tokens.get(index + 1).is_some_and(|next| next.value == ":")
-        {
-            if let Some(value) = tokens
-                .get(index + 2)
-                .filter(|next| next.kind == TokenKind::Identifier)
-            {
-                properties.push((token, value));
-            }
+        match tokens[*cursor].value.as_str() {
+            "{" => skip_group(tokens, cursor, end, "{", "}"),
+            "[" => skip_group(tokens, cursor, end, "[", "]"),
+            _ => *cursor += 1,
         }
     }
-    properties
+    assignments
+}
+
+fn parse_property_value(tokens: &[Token], cursor: &mut usize, end: usize) -> Option<PropertyValue> {
+    let token = tokens.get(*cursor)?.clone();
+    if *cursor >= end {
+        return None;
+    }
+    if token.kind == TokenKind::Identifier {
+        *cursor += 1;
+        if tokens.get(*cursor).is_some_and(|next| next.value == "{") {
+            *cursor += 1;
+            return Some(PropertyValue::Binding(
+                token,
+                parse_assignments(tokens, cursor, end),
+            ));
+        }
+        return Some(PropertyValue::Reference(token));
+    }
+    match token.value.as_str() {
+        "[" => {
+            *cursor += 1;
+            let mut items = Vec::new();
+            let mut expect_item = true;
+            let mut valid = true;
+            while *cursor < end && tokens[*cursor].value != "]" {
+                let current = &tokens[*cursor];
+                if expect_item && current.kind == TokenKind::Identifier {
+                    items.push(current.clone());
+                    expect_item = false;
+                } else if !expect_item && current.value == "," {
+                    expect_item = true;
+                } else {
+                    valid = false;
+                }
+                *cursor += 1;
+            }
+            if *cursor < end && !expect_item {
+                *cursor += 1;
+            } else {
+                valid = false;
+            }
+            Some(PropertyValue::List(items, valid))
+        }
+        "{" => {
+            *cursor += 1;
+            Some(PropertyValue::Record(parse_assignments(
+                tokens, cursor, end,
+            )))
+        }
+        _ => {
+            *cursor += 1;
+            None
+        }
+    }
+}
+
+fn skip_group(tokens: &[Token], cursor: &mut usize, end: usize, open: &str, close: &str) {
+    let mut depth = 0;
+    while *cursor < end {
+        if tokens[*cursor].value == open {
+            depth += 1;
+        } else if tokens[*cursor].value == close {
+            depth -= 1;
+            if depth == 0 {
+                *cursor += 1;
+                break;
+            }
+        }
+        *cursor += 1;
+    }
 }
 
 fn property_present(
@@ -1022,6 +1470,143 @@ mod tests {
             .findings
             .iter()
             .any(|finding| finding.code == "wrong-reference-kind"));
+    }
+
+    #[test]
+    fn binding_arguments_resolve_against_materialization_input_schema() {
+        let map = analyze(&HashMap::from([
+            ("file:///model.spec".into(),
+                "concept Data {}\nconcept ApplicationCapability {}\nconcept Application { capability { type: ApplicationCapability } }".into()),
+            ("file:///model.saml".into(),
+                "data Article {}\ndata Author {}\napplicationCapability RestApi { expose: { type: [Data] } }\napplication Portal { capability: RestApi { expose: [Article, Author] } }".into()),
+        ]));
+        assert!(map.findings.is_empty(), "{:?}", map.findings);
+        let binding = &map.bindings[0];
+        assert_eq!(binding.from, "/application:Portal");
+        assert_eq!(binding.target, "/applicationCapability:RestApi");
+        assert_eq!(binding.arguments[0].name, "expose");
+        assert_eq!(binding.arguments[0].values.len(), 2);
+        assert_eq!(
+            binding.arguments[0].values[0].target.as_deref(),
+            Some("/data:Article")
+        );
+        assert_eq!(
+            binding.arguments[0].values[1].target.as_deref(),
+            Some("/data:Author")
+        );
+        assert_eq!(
+            map.links
+                .iter()
+                .filter(|link| link.relation == "binding:capability.expose")
+                .count(),
+            2
+        );
+        let capability = map
+            .materializations
+            .iter()
+            .find(|item| item.id == "/applicationCapability:RestApi")
+            .unwrap();
+        assert_eq!(capability.parameters[0].kind, "data");
+        assert!(capability.parameters[0].many);
+    }
+
+    #[test]
+    fn concept_property_list_resolves_each_entry() {
+        let map = analyze(&HashMap::from([
+            ("file:///model.spec".into(),
+                "concept Data {}\nconcept Collection { members { type: [Data] } }".into()),
+            ("file:///model.saml".into(),
+                "data Article {}\ndata Author {}\ncollection Library { members: [Article, Author] }".into()),
+        ]));
+        assert!(map.findings.is_empty(), "{:?}", map.findings);
+        assert_eq!(
+            map.links
+                .iter()
+                .filter(|link| link.relation == "property:members")
+                .count(),
+            2
+        );
+        assert!(
+            map.concepts
+                .iter()
+                .find(|item| item.word == "collection")
+                .unwrap()
+                .properties[0]
+                .many
+        );
+    }
+
+    #[test]
+    fn malformed_reference_list_is_rejected() {
+        let map = analyze(&HashMap::from([
+            (
+                "file:///model.spec".into(),
+                "concept Data {}\nconcept Collection { members { type: [Data] } }".into(),
+            ),
+            (
+                "file:///model.saml".into(),
+                "data Article {}\ndata Author {}\ncollection Library { members: [Article Author] }"
+                    .into(),
+            ),
+        ]));
+        assert!(map
+            .findings
+            .iter()
+            .any(|item| item.code == "wrong-property-shape"));
+    }
+
+    #[test]
+    fn binding_input_shape_and_name_are_checked() {
+        let map = analyze(&HashMap::from([
+            ("file:///model.spec".into(),
+                "concept Data {}\nconcept ApplicationCapability {}\nconcept Application { capability { type: ApplicationCapability } }".into()),
+            ("file:///model.saml".into(),
+                "data Article {}\napplicationCapability RestApi { expose: { type: Data } }\napplication Portal { capability: RestApi { expose: [Article] extra: Article } }".into()),
+        ]));
+        assert!(map
+            .findings
+            .iter()
+            .any(|item| item.code == "wrong-binding-shape"));
+        assert!(map
+            .findings
+            .iter()
+            .any(|item| item.code == "unknown-binding-argument"));
+    }
+
+    #[test]
+    fn required_binding_input_is_checked_with_or_without_a_block() {
+        let map = analyze(&HashMap::from([
+            ("file:///model.spec".into(),
+                "concept Data {}\nconcept ApplicationCapability {}\nconcept Application { capability { type: ApplicationCapability } }".into()),
+            ("file:///model.saml".into(),
+                "applicationCapability RestApi { expose: { type: [Data] } }\napplication Portal { capability: RestApi }\napplication Admin { capability: RestApi {} }".into()),
+        ]));
+        assert_eq!(
+            map.findings
+                .iter()
+                .filter(|item| item.code == "missing-binding-argument")
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn binding_list_entries_report_unresolved_or_wrong_kinds() {
+        let map = analyze(&HashMap::from([
+            ("file:///model.spec".into(),
+                "concept Data {}\nconcept ApplicationCapability {}\nconcept Application { capability { type: ApplicationCapability } }".into()),
+            ("file:///model.saml".into(),
+                "data Article {}\napplicationCapability RestApi { expose: { type: [Data] } }\napplication Portal { capability: RestApi { expose: [Article, Missing, RestApi] } }".into()),
+        ]));
+        assert!(map
+            .findings
+            .iter()
+            .any(|item| item.code == "unresolved-reference"));
+        assert!(map
+            .findings
+            .iter()
+            .any(|item| item.code == "wrong-reference-kind"));
+        assert_eq!(map.bindings[0].arguments[0].values.len(), 3);
     }
 
     #[test]

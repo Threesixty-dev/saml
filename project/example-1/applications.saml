@@ -1,4 +1,4 @@
-interface RestApi { }
+applicationInterface RestApi { }
 
 
 technology AngularSPA { }
@@ -10,6 +10,13 @@ environment Browser { }
 environment Server { }
 
 
+
+
+layer Infrastructure {
+
+
+}
+
 applicationType SinglePageApplication {
   environment: Browser
   technology: AngularSPA
@@ -17,9 +24,10 @@ applicationType SinglePageApplication {
 
 layer Infrastructure applicationCapability RestApi {
   expose: {
-    type: Data
+    type: [Data]
   }
 }
+
 
 
 applicationType ApiService {
