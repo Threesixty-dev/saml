@@ -106,6 +106,7 @@ fn running_agent_portal_tracks_repository_changes_without_hub() {
         .json()
         .unwrap();
     assert_eq!(status["service"], "saml-agent");
+    assert_eq!(status["telemetry_level"], "health_and_versions");
     assert_eq!(status["workspaces"], 1);
     let workspaces: Value = client
         .get(format!("{base}/api/workspaces"))
