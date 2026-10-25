@@ -2,6 +2,7 @@ use crate::diagnostics::diagnostic_report;
 use crate::semantic::analyze;
 use crate::workspace::collect_sources_checked;
 use atomic_write_file::AtomicWriteFile;
+use semver::Version;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
@@ -12,6 +13,7 @@ use uuid::Uuid;
 
 pub const PROTOCOL_VERSION: u32 = 1;
 pub const MAX_HISTORY: usize = 100;
+pub const MAX_UPDATE_HISTORY: usize = 100;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -54,6 +56,8 @@ pub struct RepositoryHealth {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct HubState {
     pub agents: BTreeMap<String, AgentRecord>,
+    #[serde(default)]
+    pub update_events: BTreeMap<String, Vec<UpdateEvent>>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -68,6 +72,20 @@ pub struct HealthSample {
     pub at_unix_secs: u64,
     pub health: String,
     pub repositories: Vec<RepositoryHealth>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateEvent {
+    pub schema_version: u32,
+    pub agent_id: String,
+    pub event_id: String,
+    pub at_unix_secs: u64,
+    pub from_version: String,
+    pub target_version: String,
+    pub outcome: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 impl AgentConfig {
@@ -221,6 +239,61 @@ impl HubState {
     pub fn save(&self, path: &Path) -> io::Result<()> {
         write_json(path, self)
     }
+
+    pub fn record_update(&mut self, event: UpdateEvent) -> io::Result<()> {
+        validate_update_event(&event)?;
+        let history = self
+            .update_events
+            .entry(event.agent_id.clone())
+            .or_default();
+        if history
+            .iter()
+            .any(|existing| existing.event_id == event.event_id)
+        {
+            return Ok(());
+        }
+        history.push(event);
+        if history.len() > MAX_UPDATE_HISTORY {
+            history.drain(..history.len() - MAX_UPDATE_HISTORY);
+        }
+        Ok(())
+    }
+}
+
+pub fn validate_update_event(event: &UpdateEvent) -> io::Result<()> {
+    let versions = Version::parse(&event.from_version)
+        .and_then(|from| Version::parse(&event.target_version).map(|target| (from, target)));
+    let valid_reason = match event.outcome.as_str() {
+        "installed" => event.reason.is_none(),
+        "rolled_back" => matches!(
+            event.reason.as_deref(),
+            Some("agent_exited" | "health_timeout" | "state_save_failed")
+        ),
+        "download_failed" => matches!(
+            event.reason.as_deref(),
+            Some("target_fetch_failed" | "target_invalid" | "target_stage_failed")
+        ),
+        "install_failed" => event.reason.as_deref() == Some("agent_stop_failed"),
+        "rollback_failed" => event.reason.as_deref() == Some("restore_failed"),
+        _ => false,
+    };
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(io::Error::other)?
+        .as_secs();
+    if event.schema_version != PROTOCOL_VERSION
+        || Uuid::parse_str(&event.agent_id).is_err()
+        || Uuid::parse_str(&event.event_id).is_err()
+        || !versions.is_ok_and(|(from, target)| target > from)
+        || event.from_version.len() > 64
+        || event.target_version.len() > 64
+        || event.at_unix_secs < 1_577_836_800
+        || event.at_unix_secs > now.saturating_add(86_400)
+        || !valid_reason
+    {
+        return Err(invalid("invalid update event"));
+    }
+    Ok(())
 }
 
 pub fn validate_heartbeat(heartbeat: &Heartbeat) -> io::Result<()> {
@@ -363,5 +436,32 @@ mod tests {
             state.record(config.heartbeat()).unwrap();
         }
         assert_eq!(state.agents[&config.agent_id].history.len(), MAX_HISTORY);
+    }
+
+    #[test]
+    fn update_events_are_validated_and_deduplicated() {
+        let agent_id = Uuid::new_v4().to_string();
+        let event = UpdateEvent {
+            schema_version: PROTOCOL_VERSION,
+            agent_id: agent_id.clone(),
+            event_id: Uuid::new_v4().to_string(),
+            at_unix_secs: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+            from_version: "0.3.4".into(),
+            target_version: "0.3.5".into(),
+            outcome: "rolled_back".into(),
+            reason: Some("health_timeout".into()),
+        };
+        let mut state = HubState::default();
+        state.record_update(event.clone()).unwrap();
+        state.record_update(event.clone()).unwrap();
+        assert_eq!(state.update_events[&agent_id].len(), 1);
+        let mut unsafe_event = event;
+        unsafe_event.event_id = Uuid::new_v4().to_string();
+        unsafe_event.reason = Some("/private/path?token=secret".into());
+        assert!(state.record_update(unsafe_event).is_err());
+        assert_eq!(state.update_events[&agent_id].len(), 1);
     }
 }

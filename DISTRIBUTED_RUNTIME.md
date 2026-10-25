@@ -52,7 +52,8 @@ It has a schema version so agent and hub releases can evolve independently.
 The hub records last-seen state and the latest 100 samples per agent in an
 atomically replaced JSON file, exposed by an authenticated API. A central
 dashboard shows recent presence, versions, repository health, and history.
-Update outcomes in hub telemetry and OpenTelemetry export remain future work.
+The launcher also reports verified release attempts to the hub. OpenTelemetry
+export remains future work.
 
 The heartbeat reports an opaque ID and health state for each registered
 repository without sending its path or model data. An unhealthy repository
@@ -206,7 +207,7 @@ key. Download artifacts from the same passing commit, then sign the desired
 platform binaries on the trusted signing machine. For example:
 
 ```sh
-python3 scripts/publish-agent-release.py --version 0.3.5 \
+python3 scripts/publish-agent-release.py --version 0.3.6 \
   --key /private/path/update-signing-key.pem --output updates \
   --target macos/aarch64=/path/to/macos-aarch64/saml-agent \
   --target linux/aarch64=/path/to/linux-aarch64/saml-agent
@@ -234,13 +235,24 @@ itself is a stable bootstrap executable; deploying it initially is a manual
 step. On Windows, it stores versioned agents with the `.exe` suffix. Platform
 binaries must be published for each target platform.
 
+The launcher keeps a private `update-events.json` beside `active.json` and
+sends update outcomes to `POST /api/v1/update-events` with the existing agent
+credential and Cloudflare service token. It retries undelivered events after
+network failures. The hub deduplicates event IDs and retains the latest 100
+events per agent. The dashboard shows the attempted version, installed or
+failed result, time, and a fixed reason code translated to a short description.
+No file paths, network error bodies, credentials, or model data are sent.
+Unsigned or unreachable manifest checks remain in local launcher logs because
+there is no authenticated target version to report. Updating an existing
+launcher to gain this reporting requires a manual launcher replacement.
+
 To smoke-test a Linux ARM64 update against the deployed hub, provide a Linux
 bootstrap agent and launcher from the previous version, the new version, the
 hub URL, and any Cloudflare Access service token in the environment:
 
 ```sh
 scripts/test-linux-update.sh /path/to/old/saml-agent \
-  /path/to/old/saml-launcher 0.3.5 https://saml.coolify.threesixty.dev
+  /path/to/old/saml-launcher 0.3.6 https://saml.coolify.threesixty.dev
 ```
 
 The script starts an isolated Linux container, waits for the signed update,
@@ -248,8 +260,8 @@ checks the new agent's local portal, then removes the test container. It sends
 no fleet heartbeat and requires no test agent credential.
 
 This is a single-key signed manifest, not a complete TUF repository. Key
-rotation, delegated roles, staged rollouts, and update outcomes in the hub
-remain future work. Keep the private key backed up securely; losing it means
+rotation, delegated roles, and staged rollouts remain future work. Keep the
+private key backed up securely; losing it means
 existing launchers cannot trust later releases without a manual trust-root
 replacement. The hub only transports release bytes and never holds the key.
 

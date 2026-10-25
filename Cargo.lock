@@ -918,7 +918,7 @@ dependencies = [
 
 [[package]]
 name = "saml-lsp"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "atomic-write-file",
  "base64",

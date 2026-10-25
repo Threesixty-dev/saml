@@ -27,7 +27,46 @@ function badge(label, stale = false) {
   return element('span', `status ${state}`, stale ? 'not seen recently' : label);
 }
 
-function renderAgent(id, record, now) {
+const updateNames = {
+  installed: 'INSTALLED',
+  rolled_back: 'ROLLED BACK',
+  download_failed: 'DOWNLOAD FAILED',
+  install_failed: 'INSTALL FAILED',
+  rollback_failed: 'RESTORE FAILED',
+};
+
+const updateReasons = {
+  agent_exited: 'New agent exited during startup',
+  health_timeout: 'New agent did not pass its health check',
+  state_save_failed: 'Could not save the new active version',
+  target_fetch_failed: 'Could not download the release',
+  target_invalid: 'Downloaded release failed verification',
+  target_stage_failed: 'Could not stage the release locally',
+  agent_stop_failed: 'Could not stop the previous agent',
+  restore_failed: 'Could not restart the previous agent',
+};
+
+function renderUpdates(updates) {
+  const section = element('div', 'agent-updates');
+  section.append(element('div', 'update-heading', `UPDATE ACTIVITY / ${updates.length}`));
+  if (!updates.length) {
+    section.append(element('p', 'update-empty', 'No update attempts reported'));
+    return section;
+  }
+  for (const event of updates.slice(-3).reverse()) {
+    const row = element('div', `update-event ${event.outcome === 'installed' ? 'success' : 'failure'}`);
+    const result = element('strong', 'update-result', updateNames[event.outcome] || event.outcome);
+    const versions = element('span', 'update-versions', `v${event.from_version} → v${event.target_version}`);
+    const detail = element('span', 'update-detail', updateReasons[event.reason] || 'Update completed');
+    const time = element('time', 'update-time', new Date(event.at_unix_secs * 1000).toLocaleString());
+    time.dateTime = new Date(event.at_unix_secs * 1000).toISOString();
+    row.append(result, versions, detail, time);
+    section.append(row);
+  }
+  return section;
+}
+
+function renderAgent(id, record, now, updates) {
   const heartbeat = record.heartbeat;
   const age = Math.max(0, now - record.last_seen_unix_secs);
   const stale = age > 90;
@@ -62,7 +101,7 @@ function renderAgent(id, record, now) {
   if (!heartbeat.repositories.length) {
     repos.append(element('p', 'repo-count', 'No repositories registered'));
   }
-  card.append(main, repos);
+  card.append(main, repos, renderUpdates(updates));
   return card;
 }
 
@@ -85,7 +124,8 @@ function render(data) {
   document.querySelector('#healthy-count').textContent = healthy;
   document.querySelector('#attention-count').textContent = attention;
   document.querySelector('#updated-at').textContent = `UPDATED ${new Date(now * 1000).toLocaleTimeString()}`;
-  fleet.replaceChildren(...entries.map(([id, record]) => renderAgent(id, record, now)));
+  fleet.replaceChildren(...entries.map(([id, record]) =>
+    renderAgent(id, record, now, data.update_events?.[id] || [])));
   document.querySelector('#empty').hidden = entries.length > 0;
 }
 
