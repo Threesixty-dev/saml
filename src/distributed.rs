@@ -18,7 +18,8 @@ pub const MAX_HISTORY: usize = 100;
 pub struct AgentConfig {
     pub schema_version: u32,
     pub agent_id: String,
-    pub hub_url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hub_url: Option<String>,
     pub repositories: Vec<RegisteredRepository>,
 }
 
@@ -68,8 +69,10 @@ pub struct HealthSample {
 }
 
 impl AgentConfig {
-    pub fn new(hub_url: String) -> io::Result<Self> {
-        validate_hub_url(&hub_url)?;
+    pub fn new(hub_url: Option<String>) -> io::Result<Self> {
+        if let Some(url) = &hub_url {
+            validate_hub_url(url)?;
+        }
         Ok(Self {
             schema_version: PROTOCOL_VERSION,
             agent_id: Uuid::new_v4().to_string(),
@@ -83,7 +86,9 @@ impl AgentConfig {
         if config.schema_version != PROTOCOL_VERSION || Uuid::parse_str(&config.agent_id).is_err() {
             return Err(invalid("unsupported config version or agent ID"));
         }
-        validate_hub_url(&config.hub_url)?;
+        if let Some(url) = &config.hub_url {
+            validate_hub_url(url)?;
+        }
         Ok(config)
     }
 
@@ -284,7 +289,7 @@ mod tests {
         fs::write(root.join("good/model.spec"), "concept Entity {}").unwrap();
         fs::write(root.join("bad/model.saml"), "entity Broken {").unwrap();
         let config_path = root.join("config.json");
-        let mut config = AgentConfig::new("http://127.0.0.1:8765".into()).unwrap();
+        let mut config = AgentConfig::new(Some("http://127.0.0.1:8765".into())).unwrap();
         let good_id = config.add_repository(&root.join("good")).unwrap();
         let bad_id = config.add_repository(&root.join("bad")).unwrap();
         assert_eq!(config.add_repository(&root.join("good")).unwrap(), good_id);
@@ -302,7 +307,7 @@ mod tests {
 
     #[test]
     fn hub_history_is_bounded() {
-        let config = AgentConfig::new("http://127.0.0.1:8765".into()).unwrap();
+        let config = AgentConfig::new(Some("http://127.0.0.1:8765".into())).unwrap();
         let mut state = HubState::default();
         for _ in 0..MAX_HISTORY + 2 {
             state.record(config.heartbeat()).unwrap();

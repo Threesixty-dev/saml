@@ -8,13 +8,23 @@ An initial [language server](LANGUAGE_SERVER.md) supports editing the evolving `
 
 The [semantic map](SEMANTIC_MODEL.md) has a Rust analyzer, a JSON CLI, and a local 3D browser viewer.
 
-The [distributed runtime](DISTRIBUTED_RUNTIME.md) now includes a portable
-`saml-agent` that monitors multiple repositories and sends health/version
-heartbeats to a self-hosted `saml-hub`. The runtime guide includes setup,
-credential provisioning, and the hub API. Signed automatic updates remain
-planned. The local viewer provides a `/api/status` endpoint with its version
-and service health.
-It can serve multiple repositories at once:
+The [distributed runtime](DISTRIBUTED_RUNTIME.md) includes a portable
+`saml-agent` that hosts the local portal and LLM API for multiple registered
+repositories. It can send health/version heartbeats to a self-hosted
+`saml-hub` with a fleet dashboard; the local service also runs without a hub.
+The runtime guide includes setup, credential provisioning, and the hub API.
+Signed automatic updates remain planned.
+
+For persistent multi-repository use:
+
+```sh
+saml-agent init --config ./agent.json
+saml-agent add --config ./agent.json --repo /path/to/repo-a
+saml-agent add --config ./agent.json --repo /path/to/repo-b
+saml-agent run --config ./agent.json
+```
+
+For one-off viewing, `saml-view` can serve multiple repositories at once:
 
 ```sh
 saml-view /path/to/repo-a /path/to/repo-b

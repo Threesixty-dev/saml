@@ -42,12 +42,14 @@ The full current rules and known gaps are in `LANGUAGE_SPECIFICATION.md`,
 4. Run `saml-map /path/to/workspace` when you need the full JSON map. Inspect
    `concepts`, `materializations`, `links`, `bindings`, and `findings` rather
    than guessing what a reference resolved to.
-5. Run `saml-view /path/to/workspace` to start the local portal. Open
+5. For one-off use, run `saml-view /path/to/workspace`. For a persistent
+   multi-repository service, register roots with `saml-agent add` and run
+   `saml-agent run --config /path/to/agent.json`. Open
    `http://127.0.0.1:8787` for the graph. A tool-enabled LLM can fetch
    `/api/guide`, `/api/diagnostics`, `/api/map`, `/api/workspaces`, and
-   `/api/status` from the same address. For multiple repositories, start
-   `saml-view /repo/a /repo/b`, list IDs with `/api/workspaces`, and pass
-   `?workspace=<id>` to `/api/map` or `/api/diagnostics`.
+   `/api/status` from the same address. List IDs with `/api/workspaces` and
+   pass `?workspace=<id>` to `/api/map` or `/api/diagnostics`. The agent's
+   repository IDs remain stable as other repositories are added or removed.
 
 The portal reads saved files on each API request. Save changes before fetching
 its data. The current analyzer checks specified structural and typed-reference

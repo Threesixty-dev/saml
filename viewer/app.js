@@ -38,7 +38,8 @@ let pointer = null;
 let lastFrame = 0;
 let size = { width: 1, height: 1, dpr: 1 };
 let labelElements = [];
-let workspaceId = 0;
+let workspaceId = '';
+let workspacesSignature = '';
 let mapRequest = 0;
 
 function compileShader(type, source) {
@@ -641,7 +642,7 @@ async function loadMap() {
   const request = ++mapRequest;
   loading.hidden = false;
   try {
-    const response = await fetch(`/api/map?workspace=${workspaceId}`, { cache: 'no-store' });
+    const response = await fetch(`/api/map?workspace=${encodeURIComponent(workspaceId)}`, { cache: 'no-store' });
     if (!response.ok) throw new Error(`Map request failed (${response.status})`);
     const data = await response.json();
     if (request !== mapRequest) return;
@@ -656,12 +657,31 @@ async function loadMap() {
   }
 }
 
-async function loadWorkspaces() {
+async function loadWorkspaces(forceMap = false) {
   try {
     const response = await fetch('/api/workspaces', { cache: 'no-store' });
     if (!response.ok) throw new Error(`Workspace request failed (${response.status})`);
     const workspaces = await response.json();
-    if (!workspaces.length) throw new Error('No repositories are configured.');
+    if (!workspaces.length) {
+      workspacePicker.replaceChildren();
+      workspacePicker.disabled = true;
+      workspaceId = '';
+      workspacesSignature = '';
+      ++mapRequest;
+      map = null;
+      nodes = [];
+      edges = [];
+      selected = null;
+      updateGeometry();
+      throw new Error('No repositories are configured.');
+    }
+    const signature = JSON.stringify(workspaces);
+    if (signature === workspacesSignature) {
+      if (forceMap) loadMap();
+      return;
+    }
+    const previousId = workspaceId;
+    workspacesSignature = signature;
     const counts = new Map();
     for (const workspace of workspaces) counts.set(workspace.name, (counts.get(workspace.name) || 0) + 1);
     workspacePicker.replaceChildren(...workspaces.map(workspace => {
@@ -672,8 +692,18 @@ async function loadWorkspaces() {
       return option;
     }));
     workspacePicker.disabled = workspaces.length === 1;
-    workspaceId = Number(workspacePicker.value);
-    loadMap();
+    const ids = workspaces.map(workspace => String(workspace.id));
+    workspaceId = ids.includes(previousId) ? previousId : ids[0];
+    workspacePicker.value = workspaceId;
+    if (workspaceId !== previousId) {
+      selected = null;
+      hovered = null;
+      search.value = '';
+      results.hidden = true;
+      tooltip.hidden = true;
+      renderSelection();
+    }
+    if (workspaceId !== previousId || forceMap) loadMap();
   } catch (error) {
     loading.hidden = true;
     errorBox.textContent = error.message;
@@ -682,7 +712,7 @@ async function loadWorkspaces() {
 }
 
 workspacePicker.addEventListener('change', () => {
-  workspaceId = Number(workspacePicker.value);
+  workspaceId = workspacePicker.value;
   selected = null;
   hovered = null;
   map = null;
@@ -746,7 +776,7 @@ document.querySelector('#toggle-motion').addEventListener('click', event => {
   event.currentTarget.title = spinning ? 'Pause rotation' : 'Resume rotation';
   event.currentTarget.setAttribute('aria-label', event.currentTarget.title);
 });
-document.querySelector('#refresh').addEventListener('click', loadMap);
+document.querySelector('#refresh').addEventListener('click', () => loadWorkspaces(true));
 document.querySelector('#mobile-panel-toggle').addEventListener('click', () => setPanelOpen(true));
 document.querySelector('#mobile-panel-close').addEventListener('click', () => setPanelOpen(false));
 for (const input of document.querySelectorAll('[data-filter]')) {
@@ -777,6 +807,7 @@ try {
   resize();
   requestAnimationFrame(draw);
   loadWorkspaces();
+  setInterval(loadWorkspaces, 5000);
 } catch (error) {
   loading.hidden = true;
   errorBox.textContent = error.message;

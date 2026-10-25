@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#102b2e">
+    <title>SAML / Observatory</title>
+    <link rel="stylesheet" href="/style.css">
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <div class="page">
+      <header class="topbar">
+        <div class="brand"><span class="mark" aria-hidden="true"><i></i><i></i><i></i></span><span>SAML <b>/</b> OBSERVATORY</span></div>
+        <div class="topbar-right"><span class="topbar-note">SELF-HOSTED CONTROL ROOM</span><span id="clock" class="clock"></span></div>
+      </header>
+
+      <main>
+        <section class="hero" aria-labelledby="page-title">
+          <div class="hero-copy">
+            <div class="eyebrow"><span class="eyebrow-line"></span> FLEET OVERVIEW <span class="eyebrow-index">/ 01</span></div>
+            <h1 id="page-title">See the state<br>of every <em>model.</em></h1>
+            <p>Agent health, repository status, and installed versions in one place. Model content stays on each machine.</p>
+          </div>
+          <div class="hero-art" aria-hidden="true">
+            <div class="orbit orbit-one"></div><div class="orbit orbit-two"></div><div class="orbit orbit-three"></div>
+            <div class="core"><span></span><span></span><span></span></div>
+            <div class="orbit-label orbit-label-one">AGENTS</div><div class="orbit-label orbit-label-two">REPOSITORIES</div>
+          </div>
+        </section>
+
+        <section class="access" id="access" aria-labelledby="access-title">
+          <div><span class="section-index">ACCESS / 01</span><h2 id="access-title">Connect to your hub</h2><p>Enter the administrator token configured on this server. It stays in this browser tab.</p></div>
+          <form id="access-form">
+            <label for="admin-token">ADMIN TOKEN</label>
+            <div class="input-row"><input id="admin-token" type="password" autocomplete="off" required placeholder="Paste token"><button type="submit">CONNECT <span aria-hidden="true">↗</span></button></div>
+          </form>
+        </section>
+
+        <section id="dashboard" class="dashboard" hidden>
+          <div class="dashboard-heading"><div><span class="section-index">LIVE SIGNAL / 02</span><h2>Fleet condition</h2></div><div class="dashboard-actions"><span id="updated-at">Waiting for data</span><button type="button" id="refresh">REFRESH ↻</button><button type="button" id="disconnect">DISCONNECT</button></div></div>
+          <div class="metrics">
+            <div class="metric"><span>REGISTERED AGENTS</span><strong id="agent-count">0</strong><small>WITH A RECORDED HEARTBEAT</small></div>
+            <div class="metric"><span>SEEN RECENTLY</span><strong id="recent-count">0</strong><small>IN THE LAST 90 SECONDS</small></div>
+            <div class="metric"><span>HEALTHY REPOSITORIES</span><strong id="healthy-count">0</strong><small>IN THE LATEST REPORTS</small></div>
+            <div class="metric metric-alert"><span>NEED ATTENTION</span><strong id="attention-count">0</strong><small>DEGRADED OR UNAVAILABLE</small></div>
+          </div>
+          <div class="fleet-heading"><div><span class="section-index">AGENT REGISTRY / 03</span><h2>Machines &amp; repositories</h2></div><span class="fleet-caption">LATEST 100 HEALTH SAMPLES PER AGENT</span></div>
+          <div id="fleet" class="fleet"></div>
+          <p id="empty" class="empty" hidden>No heartbeats yet. Provision an agent and start <code>saml-agent run</code> to see it here.</p>
+        </section>
+        <p id="message" class="message" role="status" aria-live="polite"></p>
+      </main>
+      <footer><span>SAML / OBSERVATORY</span><span>HEALTH + VERSIONS ONLY <i>·</i> NO MODEL CONTENT</span></footer>
+    </div>
+  </body>
+</html>

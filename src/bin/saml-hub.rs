@@ -12,6 +12,9 @@ use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 use uuid::Uuid;
 
 const MAX_BODY: u64 = 64 * 1024;
+const DASHBOARD_HTML: &str = include_str!("../../hub/index.html");
+const DASHBOARD_CSS: &str = include_str!("../../hub/style.css");
+const DASHBOARD_JS: &str = include_str!("../../hub/app.js");
 
 #[derive(Default, Deserialize, Serialize)]
 struct Credentials {
@@ -59,6 +62,10 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     }
     let state_path = PathBuf::from(env::var("SAML_HUB_STATE")?);
     let credentials_path = PathBuf::from(env::var("SAML_HUB_CREDENTIALS")?);
+    let update_dir = env::var("SAML_HUB_UPDATE_DIR")
+        .ok()
+        .map(|value| PathBuf::from(value).canonicalize())
+        .transpose()?;
     let admin_token = env::var("SAML_HUB_ADMIN_TOKEN")?;
     if admin_token.len() < 32 {
         return Err("SAML_HUB_ADMIN_TOKEN must be at least 32 characters".into());
@@ -74,6 +81,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             &state_path,
             &credentials_path,
             &admin_token,
+            update_dir.as_deref(),
         ) {
             eprintln!("Hub request failed: {error}");
         }
@@ -87,15 +95,48 @@ fn handle(
     state_path: &Path,
     credentials_path: &Path,
     admin_token: &str,
+    update_dir: Option<&Path>,
 ) -> io::Result<()> {
-    let route = request.url().split('?').next().unwrap_or("");
-    match (request.method(), route) {
+    let route = request.url().split('?').next().unwrap_or("").to_owned();
+    if request.method() == &Method::Get && route.starts_with("/updates/") {
+        return serve_update_file(request, &route, update_dir);
+    }
+    match (request.method(), route.as_str()) {
+        (Method::Get, "/") => respond_bytes(
+            request,
+            200,
+            "text/html; charset=utf-8",
+            DASHBOARD_HTML.as_bytes(),
+        ),
+        (Method::Get, "/style.css") => respond_bytes(
+            request,
+            200,
+            "text/css; charset=utf-8",
+            DASHBOARD_CSS.as_bytes(),
+        ),
+        (Method::Get, "/app.js") => respond_bytes(
+            request,
+            200,
+            "text/javascript; charset=utf-8",
+            DASHBOARD_JS.as_bytes(),
+        ),
         (Method::Get, "/healthz") => respond_json(request, 200, &json!({"health":"serving"})),
         (Method::Get, "/api/v1/agents") => {
             if !authorized(&request, admin_token) {
                 return respond_json(request, 401, &json!({"error":"unauthorized"}));
             }
-            respond_json(request, 200, state)
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(io::Error::other)?
+                .as_secs();
+            respond_json(
+                request,
+                200,
+                &json!({
+                    "observed_at_unix_secs": now,
+                    "agents": &state.agents,
+                }),
+            )
         }
         (Method::Post, "/api/v1/heartbeat") => {
             let mut body = Vec::new();
@@ -135,6 +176,63 @@ fn handle(
     }
 }
 
+fn serve_update_file(request: Request, route: &str, update_dir: Option<&Path>) -> io::Result<()> {
+    let Some(base) = update_dir else {
+        return respond_json(request, 404, &json!({"error":"not found"}));
+    };
+    let (subdir, name, max_size) = if let Some(name) = route.strip_prefix("/updates/metadata/") {
+        ("metadata", name, 10 * 1024 * 1024)
+    } else if let Some(name) = route.strip_prefix("/updates/targets/") {
+        ("targets", name, 512 * 1024 * 1024)
+    } else {
+        return respond_json(request, 404, &json!({"error":"not found"}));
+    };
+    if !safe_update_name(name) {
+        return respond_json(request, 404, &json!({"error":"not found"}));
+    }
+    let directory = match base.join(subdir).canonicalize() {
+        Ok(path) if path.starts_with(base) && path.is_dir() => path,
+        _ => return respond_json(request, 404, &json!({"error":"not found"})),
+    };
+    let path = match directory.join(name).canonicalize() {
+        Ok(path) if path.starts_with(&directory) && path.is_file() => path,
+        _ => return respond_json(request, 404, &json!({"error":"not found"})),
+    };
+    let file = fs::File::open(&path)?;
+    if file.metadata()?.len() > max_size {
+        return respond_json(request, 413, &json!({"error":"update file too large"}));
+    }
+    let mime = if subdir == "metadata" {
+        "application/json"
+    } else {
+        "application/octet-stream"
+    };
+    let content_type = Header::from_bytes("Content-Type", mime)
+        .map_err(|_| io::Error::other("invalid response header"))?;
+    let nosniff = Header::from_bytes("X-Content-Type-Options", "nosniff")
+        .map_err(|_| io::Error::other("invalid response header"))?;
+    let cache = Header::from_bytes("Cache-Control", "no-store")
+        .map_err(|_| io::Error::other("invalid response header"))?;
+    request.respond(
+        Response::from_file(file)
+            .with_header(content_type)
+            .with_header(nosniff)
+            .with_header(cache),
+    )
+}
+
+fn safe_update_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.split('/').all(|segment| {
+            !segment.is_empty()
+                && segment != "."
+                && segment != ".."
+                && segment
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
+        })
+}
+
 fn load_credentials(path: &Path) -> io::Result<Credentials> {
     let credentials: Credentials = serde_json::from_slice(&fs::read(path)?)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
@@ -172,11 +270,42 @@ fn authorized(request: &Request, token: &str) -> bool {
 
 fn respond_json<T: serde::Serialize>(request: Request, code: u16, value: &T) -> io::Result<()> {
     let body = serde_json::to_vec(value)?;
-    let content_type = Header::from_bytes("Content-Type", "application/json; charset=utf-8")
+    respond_bytes(request, code, "application/json; charset=utf-8", &body)
+}
+
+fn respond_bytes(request: Request, code: u16, mime: &str, body: &[u8]) -> io::Result<()> {
+    let content_type = Header::from_bytes("Content-Type", mime)
         .map_err(|_| io::Error::other("invalid response header"))?;
-    request.respond(
-        Response::from_data(body)
-            .with_status_code(StatusCode(code))
-            .with_header(content_type),
+    let cache = Header::from_bytes("Cache-Control", "no-store")
+        .map_err(|_| io::Error::other("invalid response header"))?;
+    let nosniff = Header::from_bytes("X-Content-Type-Options", "nosniff")
+        .map_err(|_| io::Error::other("invalid response header"))?;
+    let policy = Header::from_bytes(
+        "Content-Security-Policy",
+        "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
     )
+    .map_err(|_| io::Error::other("invalid response header"))?;
+    request.respond(
+        Response::from_data(body.to_vec())
+            .with_status_code(StatusCode(code))
+            .with_header(content_type)
+            .with_header(cache)
+            .with_header(nosniff)
+            .with_header(policy),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn update_paths_reject_traversal_and_encoded_names() {
+        assert!(safe_update_name("1.root.json"));
+        assert!(safe_update_name("saml-agent/linux/x86_64/0.4.0"));
+        assert!(!safe_update_name("../credentials.json"));
+        assert!(!safe_update_name("dir//file"));
+        assert!(!safe_update_name("%2e%2e/credentials.json"));
+        assert!(!safe_update_name("file?download=1"));
+    }
 }

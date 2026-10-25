@@ -48,6 +48,25 @@ fn hub_receives_only_version_and_isolated_repository_health() {
     let config_path = root.join("agent.json");
     let credentials_path = root.join("credentials.json");
     let state_path = root.join("hub-state.json");
+    let update_dir = root.join("updates");
+    fs::create_dir_all(update_dir.join("metadata")).unwrap();
+    fs::create_dir_all(update_dir.join("targets/saml-agent/linux")).unwrap();
+    fs::write(
+        update_dir.join("metadata/1.root.json"),
+        b"{\"signed\":true}",
+    )
+    .unwrap();
+    fs::write(
+        update_dir.join("targets/saml-agent/linux/release.bin"),
+        b"sample release",
+    )
+    .unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(
+        &credentials_path,
+        update_dir.join("targets/credentials.json"),
+    )
+    .unwrap();
     let port = TcpListener::bind("127.0.0.1:0")
         .unwrap()
         .local_addr()
@@ -94,6 +113,7 @@ fn hub_receives_only_version_and_isolated_repository_health() {
         .env("SAML_HUB_STATE", &state_path)
         .env("SAML_HUB_CREDENTIALS", &credentials_path)
         .env("SAML_HUB_ADMIN_TOKEN", admin_token)
+        .env("SAML_HUB_UPDATE_DIR", &update_dir)
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
@@ -119,6 +139,54 @@ fn hub_receives_only_version_and_isolated_repository_health() {
         thread::sleep(Duration::from_millis(50));
     }
     assert!(ready, "hub did not start");
+    let dashboard = client.get(&base).send().unwrap();
+    assert_eq!(dashboard.status(), 200);
+    assert!(dashboard.headers().get("content-security-policy").is_some());
+    assert!(dashboard.text().unwrap().contains("SAML / OBSERVATORY"));
+    assert_eq!(
+        client
+            .get(format!("{base}/style.css"))
+            .send()
+            .unwrap()
+            .status(),
+        200
+    );
+    assert_eq!(
+        client
+            .get(format!("{base}/app.js"))
+            .send()
+            .unwrap()
+            .status(),
+        200
+    );
+    let metadata = client
+        .get(format!("{base}/updates/metadata/1.root.json"))
+        .send()
+        .unwrap();
+    assert_eq!(metadata.status(), 200);
+    assert_eq!(metadata.bytes().unwrap(), b"{\"signed\":true}"[..]);
+    let target = client
+        .get(format!(
+            "{base}/updates/targets/saml-agent/linux/release.bin"
+        ))
+        .send()
+        .unwrap();
+    assert_eq!(target.status(), 200);
+    assert_eq!(target.bytes().unwrap(), b"sample release"[..]);
+    let encoded_traversal = client
+        .get(format!("{base}/updates/metadata/%2e%2e/credentials.json"))
+        .send()
+        .unwrap();
+    assert_eq!(encoded_traversal.status(), 404);
+    #[cfg(unix)]
+    assert_eq!(
+        client
+            .get(format!("{base}/updates/targets/credentials.json"))
+            .send()
+            .unwrap()
+            .status(),
+        404
+    );
 
     let heartbeat = AgentConfig::load(&config_path).unwrap().heartbeat();
     let rejected = client

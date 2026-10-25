@@ -1,6 +1,8 @@
-use saml_lsp::distributed::AgentConfig;
+use saml_lsp::distributed::{validate_hub_url, AgentConfig};
+use saml_lsp::portal::{serve, PortalSource};
 use std::env;
 use std::io;
+use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Duration;
@@ -9,7 +11,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = env::args().skip(1);
     let command = args
         .next()
-        .ok_or("usage: saml-agent <init|add|remove|run> --config PATH ...")?;
+        .ok_or("usage: saml-agent <init|set-hub|add|remove|run> --config PATH ...")?;
     let mut config_path = None;
     let mut hub_url = None;
     let mut repo_path = None;
@@ -30,7 +32,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config_path = config_path.ok_or("--config PATH is required")?;
     match command.as_str() {
         "init" => {
-            let hub_url = hub_url.ok_or("--hub URL is required")?;
             if config_path.exists() {
                 return Err("config already exists".into());
             }
@@ -38,6 +39,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             config.save(&config_path)?;
             println!("Agent ID: {}", config.agent_id);
             println!("Config: {}", config_path.display());
+        }
+        "set-hub" => {
+            let url = hub_url.ok_or("--hub URL is required")?;
+            validate_hub_url(&url)?;
+            let mut config = AgentConfig::load(&config_path)?;
+            config.hub_url = Some(url);
+            config.save(&config_path)?;
+            println!("Hub configured");
         }
         "add" => {
             let mut config = AgentConfig::load(&config_path)?;
@@ -57,10 +66,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("Removed repository {id}");
         }
         "run" => {
-            let token = env::var("SAML_AGENT_TOKEN")
-                .map_err(|_| "SAML_AGENT_TOKEN must contain the hub-issued agent credential")?;
-            if token.len() < 32 {
+            let config = AgentConfig::load(&config_path)?;
+            let token = env::var("SAML_AGENT_TOKEN").ok();
+            if token.as_deref().is_some_and(|value| value.len() < 32) {
                 return Err("SAML_AGENT_TOKEN must be at least 32 characters".into());
+            }
+            if once && token.is_none() {
+                return Err("SAML_AGENT_TOKEN is required for --once".into());
+            }
+            if token.is_some() && config.hub_url.is_none() {
+                return Err("configure --hub before sending heartbeats".into());
+            }
+            if !once {
+                let port = env::var("SAML_AGENT_PORT")
+                    .ok()
+                    .map(|value| value.parse::<u16>())
+                    .transpose()?
+                    .unwrap_or(8787);
+                let listener = TcpListener::bind(("127.0.0.1", port))?;
+                println!("SAML agent portal: http://{}", listener.local_addr()?);
+                let portal_config = config_path.clone();
+                thread::spawn(move || {
+                    if let Err(error) = serve(listener, PortalSource::AgentConfig(portal_config)) {
+                        eprintln!("Agent portal stopped: {error}");
+                    }
+                });
+                if token.is_none() {
+                    println!("Hub heartbeat disabled; local portal remains available");
+                }
             }
             let client = reqwest::blocking::Client::builder()
                 .redirect(reqwest::redirect::Policy::none())
@@ -73,10 +106,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .unwrap_or(30)
                 .max(5);
             loop {
-                match send_once(&client, &config_path, &token) {
-                    Ok(()) => println!("Heartbeat sent"),
-                    Err(error) if once => return Err(error),
-                    Err(error) => eprintln!("Heartbeat failed: {error}"),
+                if let Some(token) = &token {
+                    match send_once(&client, &config_path, token) {
+                        Ok(()) => println!("Heartbeat sent"),
+                        Err(error) if once => return Err(error),
+                        Err(error) => eprintln!("Heartbeat failed: {error}"),
+                    }
                 }
                 if once {
                     break;
@@ -95,7 +130,11 @@ fn send_once(
     token: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let config = AgentConfig::load(config_path)?;
-    let url = format!("{}/api/v1/heartbeat", config.hub_url.trim_end_matches('/'));
+    let hub_url = config
+        .hub_url
+        .as_deref()
+        .ok_or("hub URL is not configured")?;
+    let url = format!("{}/api/v1/heartbeat", hub_url.trim_end_matches('/'));
     let response = client
         .post(url)
         .bearer_auth(token)
