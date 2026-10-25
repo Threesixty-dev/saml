@@ -51,6 +51,16 @@ The full current rules and known gaps are in `LANGUAGE_SPECIFICATION.md`,
    pass `?workspace=<id>` to `/api/map` or `/api/diagnostics`. The agent's
    repository IDs remain stable as other repositories are added or removed.
 
+If model files live outside the source repository, register the repository
+with `--model-root`:
+
+```sh
+saml-agent add --config /path/to/agent.json --repo /path/to/repo --model-root /path/to/model
+```
+
+The local portal names the source repository and analyzes the separate model
+workspace.
+
 The portal reads saved files on each API request. Save changes before fetching
 its data. The current analyzer checks specified structural and typed-reference
 rules; it does not prove that an implementation fulfills the architecture or

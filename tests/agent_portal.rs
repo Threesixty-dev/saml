@@ -43,8 +43,9 @@ fn running_agent_portal_tracks_repository_changes_without_hub() {
         .as_nanos();
     let root = std::env::temp_dir().join(format!("saml-portal-{}-{unique}", std::process::id()));
     fs::create_dir_all(root.join("good")).unwrap();
+    fs::create_dir_all(root.join("good-model")).unwrap();
     fs::create_dir_all(root.join("bad")).unwrap();
-    fs::write(root.join("good/model.spec"), "concept Entity {}").unwrap();
+    fs::write(root.join("good-model/model.spec"), "concept Entity {}").unwrap();
     fs::write(root.join("bad/model.saml"), "entity Broken {").unwrap();
     let config_path = root.join("agent.json");
     agent_command(&["init", "--config", as_str(&config_path)]);
@@ -54,6 +55,8 @@ fn running_agent_portal_tracks_repository_changes_without_hub() {
         as_str(&config_path),
         "--repo",
         as_str(&root.join("good")),
+        "--model-root",
+        as_str(&root.join("good-model")),
     ]);
     let port = TcpListener::bind("127.0.0.1:0")
         .unwrap()

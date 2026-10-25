@@ -28,6 +28,8 @@ pub struct AgentConfig {
 pub struct RegisteredRepository {
     pub id: String,
     pub root: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_root: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -97,17 +99,33 @@ impl AgentConfig {
     }
 
     pub fn add_repository(&mut self, root: &Path) -> io::Result<String> {
+        self.add_repository_with_model(root, None)
+    }
+
+    pub fn add_repository_with_model(
+        &mut self,
+        root: &Path,
+        model_root: Option<&Path>,
+    ) -> io::Result<String> {
         let root = root.canonicalize()?;
         if !root.is_dir() {
             return Err(invalid("repository root must be a directory"));
         }
-        if let Some(existing) = self.repositories.iter().find(|repo| repo.root == root) {
+        let model_root = model_root.map(|path| path.canonicalize()).transpose()?;
+        if model_root.as_ref().is_some_and(|path| !path.is_dir()) {
+            return Err(invalid("model root must be a directory"));
+        }
+        if let Some(existing) = self.repositories.iter_mut().find(|repo| repo.root == root) {
+            if model_root.is_some() {
+                existing.model_root = model_root;
+            }
             return Ok(existing.id.clone());
         }
         let id = Uuid::new_v4().to_string();
         self.repositories.push(RegisteredRepository {
             id: id.clone(),
             root,
+            model_root,
         });
         Ok(id)
     }
@@ -121,9 +139,16 @@ impl AgentConfig {
                     "missing"
                 } else {
                     let mut sources = HashMap::new();
-                    match collect_sources_checked(&repo.root, &mut sources) {
+                    let model_root = repo.model_root.as_deref().unwrap_or(&repo.root);
+                    match collect_sources_checked(model_root, &mut sources) {
                         Err(_) => "unavailable",
                         Ok(()) => {
+                            if sources.is_empty() {
+                                return RepositoryHealth {
+                                    id: repo.id.clone(),
+                                    health: "degraded".into(),
+                                };
+                            }
                             let map = analyze(&sources);
                             if diagnostic_report(&sources, &map).errors > 0 {
                                 "degraded"
@@ -302,6 +327,31 @@ mod tests {
         assert_eq!(heartbeat.repositories[1].health, "degraded");
         let serialized = serde_json::to_string(&heartbeat).unwrap();
         assert!(!serialized.contains(root.to_str().unwrap()));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn external_model_root_keeps_repository_identity() {
+        let root = std::env::temp_dir().join(format!("saml-model-test-{}", Uuid::new_v4()));
+        fs::create_dir_all(root.join("source")).unwrap();
+        fs::create_dir_all(root.join("model")).unwrap();
+        fs::write(root.join("model/spec.saml"), "concept Entity {}").unwrap();
+        let mut config = AgentConfig::new(None).unwrap();
+        let id = config
+            .add_repository_with_model(&root.join("source"), Some(&root.join("model")))
+            .unwrap();
+        assert_eq!(
+            config.repositories[0].root,
+            root.join("source").canonicalize().unwrap()
+        );
+        assert_eq!(
+            config.repositories[0].model_root,
+            Some(root.join("model").canonicalize().unwrap())
+        );
+        assert_eq!(config.heartbeat().repositories[0].health, "healthy");
+        assert_eq!(config.add_repository(&root.join("source")).unwrap(), id);
+        fs::remove_file(root.join("model/spec.saml")).unwrap();
+        assert_eq!(config.heartbeat().repositories[0].health, "degraded");
         fs::remove_dir_all(root).unwrap();
     }
 

@@ -41,6 +41,7 @@ is the property name and `Environment` is the required value's concept. A
 materialization of `ApplicationType` must provide `environment` with an
 `Environment` materialization. A resolved `extends` base may provide it instead.
 `type: [Data]` declares a list of `Data` references instead of one reference.
+An empty list `[]` is valid when a materialization has no such references.
 Property names belong to their concept; they do not introduce new vocabulary.
 
 Using a vocabulary word with a name materializes that concept in the model.

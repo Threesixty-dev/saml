@@ -24,6 +24,15 @@ saml-agent add --config ./agent.json --repo /path/to/repo-b
 saml-agent run --config ./agent.json
 ```
 
+If a repository's model is kept separately, register it with `--model-root`:
+
+```sh
+saml-agent add --config ./agent.json --repo /path/to/repo --model-root /path/to/model
+```
+
+The portal retains the repository identity and reads the specified model
+workspace. An empty model workspace reports degraded health.
+
 For one-off viewing, `saml-view` can serve multiple repositories at once:
 
 ```sh

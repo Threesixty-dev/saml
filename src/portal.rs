@@ -23,6 +23,7 @@ pub enum PortalSource {
 pub struct PortalRepository {
     pub id: String,
     pub root: PathBuf,
+    pub model_root: PathBuf,
 }
 
 impl PortalSource {
@@ -34,6 +35,7 @@ impl PortalSource {
                 .map(|(index, root)| PortalRepository {
                     id: index.to_string(),
                     root: root.clone(),
+                    model_root: root.clone(),
                 })
                 .collect()),
             Self::AgentConfig(path) => Ok(AgentConfig::load(path)?
@@ -41,6 +43,7 @@ impl PortalSource {
                 .into_iter()
                 .map(|repo| PortalRepository {
                     id: repo.id,
+                    model_root: repo.model_root.unwrap_or_else(|| repo.root.clone()),
                     root: repo.root,
                 })
                 .collect()),
@@ -269,8 +272,8 @@ fn selected_root<'a>(query: &str, roots: &'a [PortalRepository]) -> Option<&'a P
         Some(id) => roots
             .iter()
             .find(|repo| repo.id == id)
-            .map(|repo| repo.root.as_path()),
-        None => roots.first().map(|repo| repo.root.as_path()),
+            .map(|repo| repo.model_root.as_path()),
+        None => roots.first().map(|repo| repo.model_root.as_path()),
     }
 }
 
@@ -298,16 +301,18 @@ mod tests {
             PortalRepository {
                 id: "first".into(),
                 root: PathBuf::from("/one"),
+                model_root: PathBuf::from("/models/one"),
             },
             PortalRepository {
                 id: "second".into(),
                 root: PathBuf::from("/two"),
+                model_root: PathBuf::from("/models/two"),
             },
         ];
-        assert_eq!(selected_root("", &roots), Some(Path::new("/one")));
+        assert_eq!(selected_root("", &roots), Some(Path::new("/models/one")));
         assert_eq!(
             selected_root("workspace=second", &roots),
-            Some(Path::new("/two"))
+            Some(Path::new("/models/two"))
         );
         assert_eq!(selected_root("workspace=third", &roots), None);
         assert_eq!(selected_root("workspace=abc", &roots), None);

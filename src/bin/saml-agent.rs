@@ -44,6 +44,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut config_path = None;
     let mut hub_url = None;
     let mut repo_path = None;
+    let mut model_path = None;
     let mut repo_id = None;
     let mut once = false;
     while let Some(arg) = args.next() {
@@ -53,6 +54,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             "--hub" => hub_url = Some(args.next().ok_or("missing --hub value")?),
             "--repo" => repo_path = Some(PathBuf::from(args.next().ok_or("missing --repo value")?)),
+            "--model-root" => {
+                model_path = Some(PathBuf::from(
+                    args.next().ok_or("missing --model-root value")?,
+                ))
+            }
             "--id" => repo_id = Some(args.next().ok_or("missing --id value")?),
             "--once" => once = true,
             _ => return Err(format!("unknown argument: {arg}").into()),
@@ -79,7 +85,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         "add" => {
             let mut config = AgentConfig::load(&config_path)?;
-            let id = config.add_repository(&repo_path.ok_or("--repo PATH is required")?)?;
+            let id = config.add_repository_with_model(
+                &repo_path.ok_or("--repo PATH is required")?,
+                model_path.as_deref(),
+            )?;
             config.save(&config_path)?;
             println!("Repository ID: {id}");
         }

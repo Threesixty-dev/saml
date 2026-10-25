@@ -1256,9 +1256,7 @@ fn value_references(value: &PropertyValue, many: bool) -> Option<Vec<&Token>> {
         (PropertyValue::Reference(token), false) | (PropertyValue::Binding(token, _), false) => {
             Some(vec![token])
         }
-        (PropertyValue::List(tokens, true), true) if !tokens.is_empty() => {
-            Some(tokens.iter().collect())
-        }
+        (PropertyValue::List(tokens, true), true) => Some(tokens.iter().collect()),
         _ => None,
     }
 }
@@ -1342,7 +1340,7 @@ fn parse_property_value(tokens: &[Token], cursor: &mut usize, end: usize) -> Opt
                 }
                 *cursor += 1;
             }
-            if *cursor < end && !expect_item {
+            if *cursor < end && (!expect_item || items.is_empty()) {
                 *cursor += 1;
             } else {
                 valid = false;
@@ -1917,6 +1915,25 @@ mod tests {
             .findings
             .iter()
             .any(|item| item.code == "wrong-property-shape"));
+    }
+
+    #[test]
+    fn empty_reference_list_is_valid() {
+        let map = analyze(&HashMap::from([
+            (
+                "file:///model.spec".into(),
+                "concept Data {}\nconcept Collection { members { type: [Data] } }".into(),
+            ),
+            (
+                "file:///model.saml".into(),
+                "collection Empty { members: [] }".into(),
+            ),
+        ]));
+        assert!(map.findings.is_empty(), "{:?}", map.findings);
+        assert!(map
+            .links
+            .iter()
+            .all(|link| link.relation != "property:members"));
     }
 
     #[test]

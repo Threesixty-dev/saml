@@ -77,6 +77,11 @@ saml-agent add --config ./agent.json --repo /path/to/repo-b
 saml-agent run --config ./agent.json
 ```
 
+Models may also be stored outside their source repository. Add
+`--model-root /path/to/model` when registering a repository; the agent keeps
+the canonical source path and stable ID, while the portal and health check
+analyze the model root. A repository with no model sources is degraded.
+
 The agent portal listens on `127.0.0.1:8787` by default. Set
 `SAML_AGENT_PORT` to another port. The portal and local LLM endpoints remain
 available without a hub or token.
