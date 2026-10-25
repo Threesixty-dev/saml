@@ -131,6 +131,13 @@ fn hub_initializes_empty_credentials_on_fresh_volume() {
         thread::sleep(Duration::from_millis(50));
     }
     assert!(ready, "hub did not start with an empty data directory");
+    let health: Value = client
+        .get(format!("{base}/healthz"))
+        .send()
+        .unwrap()
+        .json()
+        .unwrap();
+    assert_eq!(health["version"], env!("CARGO_PKG_VERSION"));
     let config: Value = client
         .get(format!("{base}/api/v1/config"))
         .send()

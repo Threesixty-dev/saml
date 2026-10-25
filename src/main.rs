@@ -138,7 +138,7 @@ impl<R: BufRead, W: Write> Server<R, W> {
                                    "tokenModifiers": ["declaration"]},
                         "full": true
                     }
-                }, "serverInfo": {"name": "saml-lsp", "version": "0.3.0"}})))
+                }, "serverInfo": {"name": "saml-lsp", "version": env!("CARGO_PKG_VERSION")}})))
             }
             "shutdown" => Ok(Some(Value::Null)),
             "exit" => {

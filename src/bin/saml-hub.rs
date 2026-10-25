@@ -130,7 +130,11 @@ fn handle(
             "text/javascript; charset=utf-8",
             DASHBOARD_JS.as_bytes(),
         ),
-        (Method::Get, "/healthz") => respond_json(request, 200, &json!({"health":"serving"})),
+        (Method::Get, "/healthz") => respond_json(
+            request,
+            200,
+            &json!({"health":"serving", "version":env!("CARGO_PKG_VERSION")}),
+        ),
         (Method::Get, "/api/v1/config") => respond_json(
             request,
             200,
