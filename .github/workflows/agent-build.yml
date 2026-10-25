@@ -26,7 +26,7 @@ jobs:
         include:
           - platform: macos/aarch64
             artifact: macos-aarch64
-            runner: macos-15-arm64
+            runner: macos-15
             suffix: ""
           - platform: macos/x86_64
             artifact: macos-x86_64
