@@ -1,0 +1,57 @@
+specification {
+    element actor
+    element domainEntity
+    element data
+    element action
+    element stage
+    element application
+    element capability
+    element queue
+
+    relationship initiates
+    relationship handles
+    relationship precedes
+    relationship consumes
+    relationship provides
+    relationship exposes
+    relationship realizes
+    relationship enqueues
+}
+
+model {
+    author = actor 'Author'
+    article = domainEntity 'Article'
+    articleData = data 'Article data'
+    publish = action 'Article publication'
+    evaluation = stage 'Evaluation'
+    publication = stage 'Publication'
+    frontend = application 'User portal frontend' {
+        technology 'Angular SPA'
+        metadata {
+            runtime 'browser'
+        }
+    }
+    backend = application 'User portal backend' {
+        technology 'Express'
+        metadata {
+            runtime 'server'
+        }
+    }
+    api = capability 'Articles REST API'
+    workQueue = queue 'Publication queue'
+
+    author -[initiates]-> publish
+    publish -[enqueues]-> workQueue
+    workQueue -[handles]-> evaluation
+    evaluation -[precedes]-> publication
+    frontend -[consumes]-> api
+    backend -[provides]-> api
+    api -[exposes]-> articleData
+    articleData -[realizes]-> article
+}
+
+views {
+    view articlePublication {
+        include *
+    }
+}

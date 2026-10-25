@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<model xmlns="http://www.opengroup.org/xsd/archimate/3.0/"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       identifier="id-article-publication">
+  <name xml:lang="en">Article publication</name>
+  <documentation xml:lang="en">Trace an author's publication request from business workflow through applications and deployment.</documentation>
+  <elements>
+    <element identifier="id-author" xsi:type="BusinessRole"><name xml:lang="en">Author</name></element>
+    <element identifier="id-article" xsi:type="BusinessObject"><name xml:lang="en">Article</name></element>
+    <element identifier="id-author-profile" xsi:type="BusinessObject"><name xml:lang="en">Author profile</name></element>
+    <element identifier="id-submission" xsi:type="BusinessProcess"><name xml:lang="en">Submit article</name></element>
+    <element identifier="id-evaluation" xsi:type="BusinessProcess"><name xml:lang="en">Evaluate article</name></element>
+    <element identifier="id-publication" xsi:type="BusinessProcess"><name xml:lang="en">Publish approved article</name></element>
+    <element identifier="id-submitted" xsi:type="BusinessEvent"><name xml:lang="en">Article submitted</name></element>
+    <element identifier="id-min-letters" xsi:type="Constraint"><name xml:lang="en">Article must satisfy minimum letter count</name></element>
+
+    <element identifier="id-frontend" xsi:type="ApplicationComponent"><name xml:lang="en">User portal frontend</name></element>
+    <element identifier="id-backend" xsi:type="ApplicationComponent"><name xml:lang="en">User portal backend</name></element>
+    <element identifier="id-handle-publication" xsi:type="ApplicationFunction"><name xml:lang="en">Handle publication request</name></element>
+    <element identifier="id-api" xsi:type="ApplicationService"><name xml:lang="en">Articles REST API</name></element>
+    <element identifier="id-article-data" xsi:type="DataObject"><name xml:lang="en">Article data</name></element>
+    <element identifier="id-author-data" xsi:type="DataObject"><name xml:lang="en">Author data</name></element>
+
+    <element identifier="id-client" xsi:type="Device"><name xml:lang="en">Client device</name></element>
+    <element identifier="id-server" xsi:type="Device"><name xml:lang="en">Server host</name></element>
+    <element identifier="id-frontend-bundle" xsi:type="Artifact"><name xml:lang="en">Angular frontend bundle</name></element>
+    <element identifier="id-backend-binary" xsi:type="Artifact"><name xml:lang="en">Express backend deployment</name></element>
+  </elements>
+  <relationships>
+    <relationship identifier="id-r1" source="id-author" target="id-submission" xsi:type="Assignment"/>
+    <relationship identifier="id-r2" source="id-submission" target="id-article" xsi:type="Access"/>
+    <relationship identifier="id-r3" source="id-submission" target="id-submitted" xsi:type="Triggering"/>
+    <relationship identifier="id-r4" source="id-submitted" target="id-evaluation" xsi:type="Triggering"/>
+    <relationship identifier="id-r5" source="id-evaluation" target="id-publication" xsi:type="Triggering">
+      <name xml:lang="en">Only when evaluation succeeds</name>
+    </relationship>
+    <relationship identifier="id-r6" source="id-min-letters" target="id-evaluation" xsi:type="Association"/>
+    <relationship identifier="id-r7" source="id-backend" target="id-handle-publication" xsi:type="Assignment"/>
+    <relationship identifier="id-r8" source="id-handle-publication" target="id-api" xsi:type="Realization"/>
+    <relationship identifier="id-r9" source="id-api" target="id-frontend" xsi:type="Serving"/>
+    <relationship identifier="id-r10" source="id-article-data" target="id-article" xsi:type="Realization"/>
+    <relationship identifier="id-r11" source="id-author-data" target="id-author-profile" xsi:type="Realization"/>
+    <relationship identifier="id-r12" source="id-backend" target="id-article-data" xsi:type="Access"/>
+    <relationship identifier="id-r13" source="id-backend" target="id-author-data" xsi:type="Access"/>
+    <relationship identifier="id-r14" source="id-frontend-bundle" target="id-frontend" xsi:type="Realization"/>
+    <relationship identifier="id-r15" source="id-backend-binary" target="id-backend" xsi:type="Realization"/>
+    <relationship identifier="id-r16" source="id-client" target="id-frontend-bundle" xsi:type="Assignment"/>
+    <relationship identifier="id-r17" source="id-server" target="id-backend-binary" xsi:type="Assignment"/>
+  </relationships>
+</model>

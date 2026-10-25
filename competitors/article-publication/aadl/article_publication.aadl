@@ -1,0 +1,54 @@
+package Article_Publication
+public
+    -- Browser, REST, and the article rule are design intent, not AADL port types.
+    system User_Portal_Frontend
+        features
+            submit: out event data port;
+            published: in event data port;
+            rejected: in event data port;
+    end User_Portal_Frontend;
+
+    system User_Portal_Backend
+        features
+            submit: in event data port;
+            work_item: out event data port;
+    end User_Portal_Backend;
+
+    system Publication_Queue
+        features
+            pending: in event data port;
+            next: out event data port;
+    end Publication_Queue;
+
+    system Evaluation
+        features
+            candidate: in event data port;
+            accepted: out event data port;
+            rejected: out event data port;
+    end Evaluation;
+
+    system Publication
+        features
+            accepted: in event data port;
+            published: out event data port;
+    end Publication;
+
+    system Portal
+    end Portal;
+
+    system implementation Portal.impl
+        subcomponents
+            frontend: system User_Portal_Frontend;
+            backend: system User_Portal_Backend;
+            queue: system Publication_Queue;
+            evaluation: system Evaluation;
+            publication: system Publication;
+        connections
+            submit_request: port frontend.submit -> backend.submit;
+            enqueue: port backend.work_item -> queue.pending;
+            dequeue: port queue.next -> evaluation.candidate;
+            approve: port evaluation.accepted -> publication.accepted;
+            report_published: port publication.published -> frontend.published;
+            report_rejected: port evaluation.rejected -> frontend.rejected;
+    end Portal.impl;
+end Article_Publication;

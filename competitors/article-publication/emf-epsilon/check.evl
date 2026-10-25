@@ -1,0 +1,31 @@
+context Article {
+    constraint MinimumLetters {
+        check : self.letters >= 100
+        message : self.name + " has fewer than 100 letters"
+    }
+}
+
+context DataObject {
+    constraint HasDomainCounterpart {
+        check : self.realizes.isDefined()
+        message : self.name + " does not realize an Article"
+    }
+}
+
+context Consumption {
+    constraint ProviderOffersCapability {
+        check : self.provider.provides.includes(self.via)
+        message : self.provider.name + " does not provide " + self.via.name
+    }
+}
+
+context Workflow {
+    constraint PublicationFollowsSuccessfulEvaluation {
+        check : self.stages.exists(s |
+            s.name = "Publication" and
+            s.after.isDefined() and
+            s.after.name = "Evaluation" and
+            s.requiredOutcome = "Successful")
+        message : self.name + " does not gate publication on successful evaluation"
+    }
+}

@@ -1,0 +1,51 @@
+Family ArticlePublication = {
+    Component Type BrowserApplication = {
+        Port articleRequest;
+        Property runtime : string;
+        rule runsInBrowser = invariant self.runtime == "browser";
+    };
+
+    Component Type ApiApplication = {
+        Port restEndpoint;
+        Port workItem;
+        Property technology : string;
+        Property providesArticleData : int;
+        rule exposesArticleData = invariant self.providesArticleData == 1;
+    };
+
+    Component Type PublicationQueue = {
+        Port input;
+        Port output;
+    };
+
+    Connector Type RestCall = {
+        Role caller;
+        Role provider;
+    };
+
+    Connector Type AsyncWork = {
+        Role producer;
+        Role consumer;
+    };
+};
+
+System Publishing : ArticlePublication = new ArticlePublication extended with {
+    Component frontend : BrowserApplication = new BrowserApplication extended with {
+        Property runtime = "browser";
+    };
+    Component backend : ApiApplication = new ApiApplication extended with {
+        Property technology = "Express";
+        Property providesArticleData = 1;
+    };
+    Component queue : PublicationQueue = new PublicationQueue;
+
+    Connector articlesApi : RestCall = new RestCall;
+    Connector publicationRequest : AsyncWork = new AsyncWork;
+
+    Attachments {
+        frontend.articleRequest to articlesApi.caller;
+        backend.restEndpoint to articlesApi.provider;
+        backend.workItem to publicationRequest.producer;
+        queue.input to publicationRequest.consumer;
+    };
+};

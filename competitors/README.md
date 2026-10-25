@@ -54,3 +54,5 @@ feature ranking or evidence of adoption.
 
 Each walkthrough includes primary sources and a validation status. Tool versions
 and checks are recorded in [VALIDATION.md](VALIDATION.md).
+
+For the evolving SAML article-publication sketch, see the [parallel native examples](article-publication/README.md) in ArchiMate, EMF/Epsilon, Refinery, Acme/Armani, AADL, LikeC4, and Structurizr.

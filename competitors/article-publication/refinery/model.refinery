@@ -1,0 +1,64 @@
+class Actor.
+
+class Article {
+    int letters
+}
+
+class PublicationRequest {
+    Actor[1] initiator
+    Article[1] subject
+}
+
+class DataObject {
+    Article[1] realizes
+}
+
+class Capability {
+    DataObject[] exposes
+}
+
+class Application {
+    Capability[] provides
+}
+
+class Consumption {
+    Application[1] consumer
+    Application[1] provider
+    Capability[1] via
+}
+
+class Stage {
+    Stage[] after
+}
+
+pred eligible(Article article) <-> letters(article) >= 100.
+error tooShort(Article article) <-> letters(article) < 100.
+
+default !provides(*, *).
+error missingProvider(Consumption call) <->
+    provider(call, application),
+    via(call, capability),
+    !provides(application, capability).
+
+Actor(author).
+Article(article).
+letters(article): 150.
+PublicationRequest(request).
+initiator(request, author).
+subject(request, article).
+
+DataObject(articleData).
+realizes(articleData, article).
+Capability(articlesApi).
+exposes(articlesApi, articleData).
+Application(frontend).
+Application(backend).
+provides(backend, articlesApi).
+Consumption(frontendCall).
+consumer(frontendCall, frontend).
+provider(frontendCall, backend).
+via(frontendCall, articlesApi).
+
+Stage(evaluation).
+Stage(publication).
+after(publication, evaluation).

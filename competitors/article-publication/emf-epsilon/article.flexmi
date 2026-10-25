@@ -1,0 +1,15 @@
+<?nsuri https://example.org/saml/article-publication?>
+<architecture>
+    <actor name="Author"/>
+    <article name="DraftArticle" letters="150"/>
+    <dataObject name="ArticleData" realizes="DraftArticle"/>
+    <application name="UserPortalFrontend" runtime="Browser"/>
+    <application name="UserPortalBackend" runtime="Server" provides="ArticlesRestApi"/>
+    <capability name="ArticlesRestApi" exposes="ArticleData"/>
+    <consumption name="FrontendCallsBackend" consumer="UserPortalFrontend"
+                 provider="UserPortalBackend" via="ArticlesRestApi"/>
+    <workflow name="ArticlePublication" initiator="Author" subject="DraftArticle">
+        <stage name="Evaluation"/>
+        <stage name="Publication" after="Evaluation" requiredOutcome="Successful"/>
+    </workflow>
+</architecture>

@@ -1,0 +1,12 @@
+{
+  "name": "saml-article-publication-likec4",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "validate": "likec4 validate --no-layout .",
+    "check": "node check.mjs"
+  },
+  "devDependencies": {
+    "likec4": "1.60.0"
+  }
+}

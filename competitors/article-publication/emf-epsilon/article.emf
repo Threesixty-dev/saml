@@ -1,0 +1,57 @@
+@namespace(uri="https://example.org/saml/article-publication", prefix="articlepub")
+package articlepub;
+
+class Architecture {
+    val Actor[*] actors;
+    val Article[*] articles;
+    val DataObject[*] data;
+    val Application[*] applications;
+    val Capability[*] capabilities;
+    val Consumption[*] consumptions;
+    val Workflow[*] workflows;
+}
+
+class Actor {
+    attr String[1] name;
+}
+
+class Article {
+    attr String[1] name;
+    attr int letters;
+}
+
+class DataObject {
+    attr String[1] name;
+    ref Article realizes;
+}
+
+class Application {
+    attr String[1] name;
+    attr String runtime;
+    ref Capability[*] provides;
+}
+
+class Capability {
+    attr String[1] name;
+    ref DataObject[*] exposes;
+}
+
+class Consumption {
+    attr String[1] name;
+    ref Application[1] consumer;
+    ref Application[1] provider;
+    ref Capability[1] via;
+}
+
+class Workflow {
+    attr String[1] name;
+    ref Actor[1] initiator;
+    ref Article[1] subject;
+    val Stage[*] stages;
+}
+
+class Stage {
+    attr String[1] name;
+    attr String requiredOutcome;
+    ref Stage after;
+}
