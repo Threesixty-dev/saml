@@ -103,10 +103,8 @@ fn hub_initializes_empty_credentials_on_fresh_volume() {
         .env("SAML_HUB_BIND", format!("127.0.0.1:{port}"))
         .env("SAML_HUB_STATE", root.join("data/state.json"))
         .env("SAML_HUB_CREDENTIALS", &credentials_path)
-        .env(
-            "SAML_HUB_ADMIN_TOKEN",
-            "admin-token-with-more-than-32-characters",
-        )
+        .env("SAML_HUB_AUTH_MODE", "external")
+        .env_remove("SAML_HUB_ADMIN_TOKEN")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
@@ -133,6 +131,20 @@ fn hub_initializes_empty_credentials_on_fresh_volume() {
         thread::sleep(Duration::from_millis(50));
     }
     assert!(ready, "hub did not start with an empty data directory");
+    let config: Value = client
+        .get(format!("{base}/api/v1/config"))
+        .send()
+        .unwrap()
+        .json()
+        .unwrap();
+    assert_eq!(config["auth_mode"], "external");
+    let agents: Value = client
+        .get(format!("{base}/api/v1/agents"))
+        .send()
+        .unwrap()
+        .json()
+        .unwrap();
+    assert_eq!(agents["agents"], serde_json::json!({}));
     let credentials: Value = serde_json::from_slice(&fs::read(&credentials_path).unwrap()).unwrap();
     assert_eq!(credentials["agents"], serde_json::json!({}));
     #[cfg(unix)]
@@ -228,6 +240,7 @@ fn hub_receives_only_version_and_isolated_repository_health() {
         .env("SAML_HUB_STATE", &state_path)
         .env("SAML_HUB_CREDENTIALS", &credentials_path)
         .env("SAML_HUB_ADMIN_TOKEN", admin_token)
+        .env_remove("SAML_HUB_AUTH_MODE")
         .env("SAML_HUB_UPDATE_DIR", &update_dir)
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
@@ -258,6 +271,13 @@ fn hub_receives_only_version_and_isolated_repository_health() {
     assert_eq!(dashboard.status(), 200);
     assert!(dashboard.headers().get("content-security-policy").is_some());
     assert!(dashboard.text().unwrap().contains("SAML / OBSERVATORY"));
+    let config: Value = client
+        .get(format!("{base}/api/v1/config"))
+        .send()
+        .unwrap()
+        .json()
+        .unwrap();
+    assert_eq!(config["auth_mode"], "token");
     assert_eq!(
         client
             .get(format!("{base}/style.css"))

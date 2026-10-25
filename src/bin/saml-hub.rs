@@ -66,10 +66,17 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .ok()
         .map(|value| PathBuf::from(value).canonicalize())
         .transpose()?;
-    let admin_token = env::var("SAML_HUB_ADMIN_TOKEN")?;
-    if admin_token.len() < 32 {
-        return Err("SAML_HUB_ADMIN_TOKEN must be at least 32 characters".into());
-    }
+    let admin_token = match env::var("SAML_HUB_AUTH_MODE").as_deref() {
+        Ok("external") => None,
+        Ok("token") | Err(env::VarError::NotPresent) => {
+            let token = env::var("SAML_HUB_ADMIN_TOKEN")?;
+            if token.len() < 32 {
+                return Err("SAML_HUB_ADMIN_TOKEN must be at least 32 characters".into());
+            }
+            Some(token)
+        }
+        _ => return Err("SAML_HUB_AUTH_MODE must be token or external".into()),
+    };
     if !credentials_path.exists() {
         save_credentials(&credentials_path, &Credentials::default())?;
     }
@@ -83,7 +90,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             &mut state,
             &state_path,
             &credentials_path,
-            &admin_token,
+            admin_token.as_deref(),
             update_dir.as_deref(),
         ) {
             eprintln!("Hub request failed: {error}");
@@ -97,7 +104,7 @@ fn handle(
     state: &mut HubState,
     state_path: &Path,
     credentials_path: &Path,
-    admin_token: &str,
+    admin_token: Option<&str>,
     update_dir: Option<&Path>,
 ) -> io::Result<()> {
     let route = request.url().split('?').next().unwrap_or("").to_owned();
@@ -124,8 +131,13 @@ fn handle(
             DASHBOARD_JS.as_bytes(),
         ),
         (Method::Get, "/healthz") => respond_json(request, 200, &json!({"health":"serving"})),
+        (Method::Get, "/api/v1/config") => respond_json(
+            request,
+            200,
+            &json!({"auth_mode": if admin_token.is_some() { "token" } else { "external" }}),
+        ),
         (Method::Get, "/api/v1/agents") => {
-            if !authorized(&request, admin_token) {
+            if admin_token.is_some_and(|token| !authorized(&request, token)) {
                 return respond_json(request, 401, &json!({"error":"unauthorized"}));
             }
             let now = std::time::SystemTime::now()

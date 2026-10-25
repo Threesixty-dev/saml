@@ -107,8 +107,8 @@ the internet. On a fresh data directory, the hub creates an empty credentials
 file with owner-only permissions. The server
 reloads the credentials file for each heartbeat, so provisioning another
 agent does not require a restart. Open the hub's root page to use the fleet
-dashboard; it asks for `SAML_HUB_ADMIN_TOKEN` and keeps it in browser memory
-for that tab.
+dashboard. The default `SAML_HUB_AUTH_MODE=token` asks for
+`SAML_HUB_ADMIN_TOKEN` and keeps it in browser memory for that tab.
 
 ### Coolify deployment
 
@@ -118,8 +118,12 @@ the Docker Image resource. On ThreeSixty, configure the Coolify domain as
 `http://saml.coolify.threesixty.dev` to route to container port `8765`.
 Cloudflare forces public HTTP requests to HTTPS; enabling Coolify's HTTPS
 redirect on this internal route creates a redirect loop. Do not configure a
-public host port. Mount persistent storage at `/data` and set the secret
-environment variable `SAML_HUB_ADMIN_TOKEN` to at least 32 random characters.
+public host port. Mount persistent storage at `/data` and set
+`SAML_HUB_AUTH_MODE=external` when Cloudflare Access protects the entire
+hostname. The dashboard then loads without an application admin token. Keep
+the Coolify origin reachable only through trusted private networking and the
+authenticated Cloudflare route. Other deployments can keep the default token
+mode and set `SAML_HUB_ADMIN_TOKEN` to at least 32 random characters.
 The image already sets `SAML_HUB_BIND`, `SAML_HUB_ALLOW_NON_LOOPBACK`,
 `SAML_HUB_STATE`, and `SAML_HUB_CREDENTIALS`. It runs as UID 10001, so a bind
 mount must be writable by that UID. Set the HTTP health check path to
@@ -132,8 +136,9 @@ then needs a Cloudflare Access service token as well as its own SAML agent
 token. Set `SAML_CF_ACCESS_CLIENT_ID` and `SAML_CF_ACCESS_CLIENT_SECRET` in
 the agent's environment; the agent sends them as `CF-Access-Client-Id` and
 `CF-Access-Client-Secret` headers on heartbeats. Both variables must be set
-together. Keep them out of `agent.json` and the repository. The administrator
-dashboard still requires `SAML_HUB_ADMIN_TOKEN` after Cloudflare login.
+together. Keep them out of `agent.json` and the repository. In external auth
+mode, Cloudflare Access also protects the fleet API; the hub continues to
+require each agent's separate `SAML_AGENT_TOKEN` for heartbeats.
 
 From the deployed container's Coolify terminal, provision each agent's ID:
 
@@ -143,9 +148,9 @@ saml-hub provision AGENT_ID /data/credentials.json
 
 Keep the printed token private and set it as `SAML_AGENT_TOKEN` on that agent
 machine. Connect the agent with `saml-agent set-hub --config ./agent.json
---hub https://saml.coolify.threesixty.dev`. Check `/healthz`, reject an
-unauthenticated `/api/v1/agents` request, then send a heartbeat with
-`saml-agent run --config ./agent.json --once` and confirm that the dashboard
+--hub https://saml.coolify.threesixty.dev`. Check `/healthz`, verify
+Cloudflare Access denies an unauthenticated `/api/v1/agents` request, then
+send a heartbeat with `saml-agent run --config ./agent.json --once` and confirm that the dashboard
 shows the agent and its repositories.
 
 On the agent machine, set `SAML_AGENT_TOKEN` to the provisioned token and
@@ -162,10 +167,13 @@ remove --config ./agent.json --id REPOSITORY_ID` to unregister a repository.
 Each `add` prints a stable repository ID; adding the same canonical root
 again returns the existing ID.
 
-The hub exposes `GET /healthz` and `GET /api/v1/agents`. The latter requires
-`Authorization: Bearer <SAML_HUB_ADMIN_TOKEN>` and returns the last heartbeat
-and bounded history per agent. The agent sends to `POST /api/v1/heartbeat`
-using its own provisioned credential. The local analyzer, LLM commands, and
+The hub exposes `GET /healthz`, `GET /api/v1/config`, and
+`GET /api/v1/agents`. The config endpoint reports `token` or `external` auth
+mode. In token mode, the fleet endpoint requires
+`Authorization: Bearer <SAML_HUB_ADMIN_TOKEN>`; in external mode, the proxy
+controls access. The fleet endpoint returns the last heartbeat and bounded
+history per agent. The agent sends to `POST /api/v1/heartbeat` using its own
+provisioned credential in either mode. The local analyzer, LLM commands, and
 portal continue to work if the hub is unreachable.
 
 ## Updates

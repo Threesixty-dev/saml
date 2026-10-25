@@ -5,6 +5,7 @@ const dashboard = document.querySelector('#dashboard');
 const fleet = document.querySelector('#fleet');
 const message = document.querySelector('#message');
 let token = '';
+let authMode = 'token';
 
 function element(tag, className = '', value = '') {
   const node = document.createElement(tag);
@@ -89,23 +90,48 @@ function render(data) {
 }
 
 async function load() {
-  if (!token) return;
+  if (authMode === 'token' && !token) return;
   try {
     const response = await fetch('/api/v1/agents', {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
       cache: 'no-store',
     });
     if (response.status === 401) {
       token = '';
-      access.hidden = false;
       dashboard.hidden = true;
-      throw new Error('That administrator token was not accepted.');
+      if (authMode === 'token') {
+        access.hidden = false;
+        throw new Error('That administrator token was not accepted.');
+      }
+      throw new Error('Cloudflare access expired. Sign in again and reload.');
     }
     if (!response.ok) throw new Error(`Hub request failed (${response.status}).`);
     render(await response.json());
     access.hidden = true;
     dashboard.hidden = false;
     message.textContent = '';
+  } catch (error) {
+    message.textContent = error.message;
+  }
+}
+
+async function initialize() {
+  try {
+    const response = await fetch('/api/v1/config', { cache: 'no-store' });
+    if (!response.ok) throw new Error(`Hub configuration failed (${response.status}).`);
+    const config = await response.json();
+    if (!['token', 'external'].includes(config.auth_mode)) {
+      throw new Error('Unknown hub authentication mode.');
+    }
+    authMode = config.auth_mode;
+    if (authMode === 'external') {
+      document.querySelector('#disconnect').hidden = true;
+      document.querySelector('#signal-index').textContent = 'LIVE SIGNAL / 01';
+      document.querySelector('#registry-index').textContent = 'AGENT REGISTRY / 02';
+      await load();
+    } else {
+      access.hidden = false;
+    }
   } catch (error) {
     message.textContent = error.message;
   }
@@ -134,3 +160,4 @@ function updateClock() {
 updateClock();
 setInterval(updateClock, 30_000);
 setInterval(load, 10_000);
+initialize();

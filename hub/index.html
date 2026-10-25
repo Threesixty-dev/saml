@@ -29,7 +29,7 @@
           </div>
         </section>
 
-        <section class="access" id="access" aria-labelledby="access-title">
+        <section class="access" id="access" aria-labelledby="access-title" hidden>
           <div><span class="section-index">ACCESS / 01</span><h2 id="access-title">Connect to your hub</h2><p>Enter the administrator token configured on this server. It stays in this browser tab.</p></div>
           <form id="access-form">
             <label for="admin-token">ADMIN TOKEN</label>
@@ -38,14 +38,14 @@
         </section>
 
         <section id="dashboard" class="dashboard" hidden>
-          <div class="dashboard-heading"><div><span class="section-index">LIVE SIGNAL / 02</span><h2>Fleet condition</h2></div><div class="dashboard-actions"><span id="updated-at">Waiting for data</span><button type="button" id="refresh">REFRESH ↻</button><button type="button" id="disconnect">DISCONNECT</button></div></div>
+          <div class="dashboard-heading"><div><span class="section-index" id="signal-index">LIVE SIGNAL / 02</span><h2>Fleet condition</h2></div><div class="dashboard-actions"><span id="updated-at">Waiting for data</span><button type="button" id="refresh">REFRESH ↻</button><button type="button" id="disconnect">DISCONNECT</button></div></div>
           <div class="metrics">
             <div class="metric"><span>REGISTERED AGENTS</span><strong id="agent-count">0</strong><small>WITH A RECORDED HEARTBEAT</small></div>
             <div class="metric"><span>SEEN RECENTLY</span><strong id="recent-count">0</strong><small>IN THE LAST 90 SECONDS</small></div>
             <div class="metric"><span>HEALTHY REPOSITORIES</span><strong id="healthy-count">0</strong><small>IN THE LATEST REPORTS</small></div>
             <div class="metric metric-alert"><span>NEED ATTENTION</span><strong id="attention-count">0</strong><small>DEGRADED OR UNAVAILABLE</small></div>
           </div>
-          <div class="fleet-heading"><div><span class="section-index">AGENT REGISTRY / 03</span><h2>Machines &amp; repositories</h2></div><span class="fleet-caption">LATEST 100 HEALTH SAMPLES PER AGENT</span></div>
+          <div class="fleet-heading"><div><span class="section-index" id="registry-index">AGENT REGISTRY / 03</span><h2>Machines &amp; repositories</h2></div><span class="fleet-caption">LATEST 100 HEALTH SAMPLES PER AGENT</span></div>
           <div id="fleet" class="fleet"></div>
           <p id="empty" class="empty" hidden>No heartbeats yet. Provision an agent and start <code>saml-agent run</code> to see it here.</p>
         </section>
