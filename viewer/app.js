@@ -10,6 +10,7 @@ const results = document.querySelector('#search-results');
 const selection = document.querySelector('#selection');
 const loading = document.querySelector('#loading');
 const errorBox = document.querySelector('#graph-error');
+const workspacePicker = document.querySelector('#workspace-picker');
 
 const colors = {
   concept: [0.54, 0.95, 0.79],
@@ -37,6 +38,8 @@ let pointer = null;
 let lastFrame = 0;
 let size = { width: 1, height: 1, dpr: 1 };
 let labelElements = [];
+let workspaceId = 0;
+let mapRequest = 0;
 
 function compileShader(type, source) {
   const shader = gl.createShader(type);
@@ -635,18 +638,64 @@ function showTooltip(node, x, y) {
 }
 
 async function loadMap() {
+  const request = ++mapRequest;
+  loading.hidden = false;
   try {
-    const response = await fetch('/api/map', { cache: 'no-store' });
+    const response = await fetch(`/api/map?workspace=${workspaceId}`, { cache: 'no-store' });
     if (!response.ok) throw new Error(`Map request failed (${response.status})`);
-    buildGraph(await response.json());
+    const data = await response.json();
+    if (request !== mapRequest) return;
+    buildGraph(data);
     loading.hidden = true;
     errorBox.hidden = true;
+  } catch (error) {
+    if (request !== mapRequest) return;
+    loading.hidden = true;
+    errorBox.textContent = error.message;
+    errorBox.hidden = false;
+  }
+}
+
+async function loadWorkspaces() {
+  try {
+    const response = await fetch('/api/workspaces', { cache: 'no-store' });
+    if (!response.ok) throw new Error(`Workspace request failed (${response.status})`);
+    const workspaces = await response.json();
+    if (!workspaces.length) throw new Error('No repositories are configured.');
+    const counts = new Map();
+    for (const workspace of workspaces) counts.set(workspace.name, (counts.get(workspace.name) || 0) + 1);
+    workspacePicker.replaceChildren(...workspaces.map(workspace => {
+      const option = document.createElement('option');
+      option.value = workspace.id;
+      option.textContent = counts.get(workspace.name) > 1 ? workspace.path : workspace.name;
+      option.title = workspace.path;
+      return option;
+    }));
+    workspacePicker.disabled = workspaces.length === 1;
+    workspaceId = Number(workspacePicker.value);
+    loadMap();
   } catch (error) {
     loading.hidden = true;
     errorBox.textContent = error.message;
     errorBox.hidden = false;
   }
 }
+
+workspacePicker.addEventListener('change', () => {
+  workspaceId = Number(workspacePicker.value);
+  selected = null;
+  hovered = null;
+  map = null;
+  nodes = [];
+  edges = [];
+  search.value = '';
+  results.hidden = true;
+  tooltip.hidden = true;
+  renderSelection();
+  rebuildLabels();
+  updateGeometry();
+  loadMap();
+});
 
 canvas.addEventListener('pointerdown', event => {
   pointer = { id: event.pointerId, x: event.clientX, y: event.clientY, moved: false };
@@ -727,7 +776,7 @@ try {
   new ResizeObserver(resize).observe(stage);
   resize();
   requestAnimationFrame(draw);
-  loadMap();
+  loadWorkspaces();
 } catch (error) {
   loading.hidden = true;
   errorBox.textContent = error.message;

@@ -17,6 +17,9 @@ pub fn collect_sources(root: &Path, sources: &mut HashMap<String, String>) {
             continue;
         };
         if file_type.is_dir() {
+            if path.join(".git").exists() {
+                continue;
+            }
             collect_sources(&path, sources);
         } else if file_type.is_file()
             && path
@@ -63,4 +66,29 @@ pub fn path_to_uri(path: &Path) -> String {
         }
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn nested_repository_does_not_contribute_to_parent_workspace() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root =
+            std::env::temp_dir().join(format!("saml-workspace-{}-{unique}", std::process::id()));
+        let nested = root.join("nested");
+        fs::create_dir_all(nested.join(".git")).unwrap();
+        fs::write(root.join("model.spec"), "concept Entity {}").unwrap();
+        fs::write(nested.join("model.spec"), "concept Foreign {}").unwrap();
+        let mut sources = HashMap::new();
+        collect_sources(&root, &mut sources);
+        assert!(sources.contains_key(&path_to_uri(&root.join("model.spec"))));
+        assert!(!sources.contains_key(&path_to_uri(&nested.join("model.spec"))));
+        fs::remove_dir_all(root).unwrap();
+    }
 }

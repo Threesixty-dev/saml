@@ -1,5 +1,6 @@
 use saml_lsp::semantic::analyze;
 use saml_lsp::workspace::collect_sources;
+use serde_json::json;
 use std::collections::HashMap;
 use std::env;
 use std::io;
@@ -12,11 +13,30 @@ fn main() -> io::Result<()> {
     } else {
         roots
     };
-    let mut sources = HashMap::new();
+    let mut maps = Vec::new();
     for root in roots {
-        collect_sources(&root.canonicalize()?, &mut sources);
+        let root = root.canonicalize()?;
+        if !root.is_dir() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("workspace must be a directory: {}", root.display()),
+            ));
+        }
+        let mut sources = HashMap::new();
+        collect_sources(&root, &mut sources);
+        maps.push((root, analyze(&sources)));
     }
-    let map = analyze(&sources);
-    println!("{}", serde_json::to_string_pretty(&map)?);
+    if maps.len() == 1 {
+        println!("{}", serde_json::to_string_pretty(&maps[0].1)?);
+    } else {
+        let workspaces: Vec<_> = maps
+            .into_iter()
+            .map(|(root, map)| json!({"root": root, "map": map}))
+            .collect();
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({"workspaces": workspaces}))?
+        );
+    }
     Ok(())
 }

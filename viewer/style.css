@@ -17,7 +17,7 @@
 * { box-sizing: border-box; }
 html, body { margin: 0; min-width: 320px; min-height: 100%; }
 body { color: var(--type); font-family: var(--sans); background: var(--ink); }
-button, input { font: inherit; }
+button, input, select { font: inherit; }
 button { cursor: pointer; }
 [hidden] { display: none !important; }
 ::selection { background: var(--mint); color: var(--ink); }
@@ -47,6 +47,9 @@ button { cursor: pointer; }
 .topbar-actions { display: flex; align-items: center; justify-content: flex-end; gap: 17px; }
 .live-pill { color: #afd9c8; font: 10px/1 var(--mono); letter-spacing: .11em; white-space: nowrap; }
 .live-pill span { display: inline-block; width: 6px; height: 6px; margin-right: 8px; background: var(--mint); border-radius: 50%; box-shadow: 0 0 12px var(--mint); vertical-align: 1px; }
+.workspace-picker { display: flex; align-items: center; gap: 9px; color: #8eaaa9; font: 9px/1 var(--mono); letter-spacing: .11em; }
+.workspace-picker select { max-width: 190px; min-width: 100px; padding: 7px 25px 7px 9px; border: 1px solid #36565b; border-radius: 4px; color: #eaf4eb; background: #12343a; font: 11px/1.2 var(--mono); letter-spacing: 0; cursor: pointer; }
+.workspace-picker select:focus-visible { outline: 2px solid var(--mint); outline-offset: 2px; }
 .icon-button { display: grid; place-items: center; width: 30px; height: 30px; border: 1px solid #36565b; border-radius: 50%; color: var(--mint); background: transparent; font: 23px/1 var(--sans); transition: transform .3s, background .2s; }
 .icon-button:hover { transform: rotate(40deg); background: #173a40; }
 
@@ -190,6 +193,8 @@ button { cursor: pointer; }
   .topbar { height: 56px; padding: 0 17px; grid-template-columns: 1fr auto; }
   .topbar-center { display: none; }
   .live-pill { display: none; }
+  .workspace-picker > span { display: none; }
+  .workspace-picker select { max-width: min(40vw, 160px); min-width: 76px; }
   .layout { display: block; min-height: calc(100dvh - 56px); }
   .stage { min-height: calc(100dvh - 56px); }
   .stage-title { left: 24px; top: 38px; }

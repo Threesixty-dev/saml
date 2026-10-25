@@ -17,7 +17,13 @@
         </div>
         <div class="topbar-center">A LIVE MAP OF MEANING</div>
         <div class="topbar-actions">
-          <span class="live-pill"><span></span> LOCAL WORKSPACE</span>
+          <span class="live-pill"><span></span> LOCAL WORKSPACES</span>
+          <label class="workspace-picker" for="workspace-picker">
+            <span>REPOSITORY</span>
+            <select id="workspace-picker" aria-label="Select repository" disabled>
+              <option>Loading...</option>
+            </select>
+          </label>
           <button id="refresh" class="icon-button" type="button" aria-label="Refresh semantic map" title="Refresh semantic map">↻</button>
         </div>
       </header>

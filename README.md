@@ -8,4 +8,33 @@ An initial [language server](LANGUAGE_SERVER.md) supports editing the evolving `
 
 The [semantic map](SEMANTIC_MODEL.md) has a Rust analyzer, a JSON CLI, and a local 3D browser viewer.
 
+The proposed [distributed runtime](DISTRIBUTED_RUNTIME.md) describes a
+cross-platform agent, a self-hosted observability hub, and over-the-air updates.
+The local viewer now provides a `/api/status` endpoint with its version and
+service health; hub connectivity and automatic updates are planned work.
+It can serve multiple repositories at once:
+
+```sh
+saml-view /path/to/repo-a /path/to/repo-b
+```
+
+Use `/api/workspaces` to list them; `/api/map` and `/api/diagnostics` accept
+`?workspace=<id>`. The portal has a repository selector. Each repository is
+analyzed independently.
+
+To use SAML with a tool-enabled LLM in any project, see the [agent guide](LLM_GUIDE.md).
+The `saml-check` command reports syntax and semantic diagnostics as JSON and
+exits with status 1 on errors. The local viewer also serves an agent-facing
+guide and diagnostics at `/api/guide` and `/api/diagnostics`.
+
+Install the standalone tools with `cargo install --path .` from this checkout.
+In another project, put vocabulary in a `.spec` file (or `spec.saml`) and models
+in `.saml` files, then run `saml-check .` or `saml-view .` from that project.
+`saml-check` and `saml-map` also accept multiple directories and return one
+result per repository in a `workspaces` array; a single directory retains the
+original JSON shape.
+Give an LLM with file and command access the path to `LLM_GUIDE.md` and instruct
+it to run `saml-check .` after edits. An LLM with local HTTP access can also
+read the viewer's `/api/guide`, `/api/diagnostics`, and `/api/map` endpoints.
+
 See [competitors](competitors/README.md) for worked examples of existing modeling approaches.

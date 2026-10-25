@@ -9,6 +9,23 @@ semantic map. `src/main.rs` exposes findings as LSP diagnostics; the standalone
 cargo run --bin saml-map -- project/example-1
 ```
 
+For a machine-readable validation gate, run:
+
+```sh
+cargo run --bin saml-check -- project/example-1
+```
+
+It prints syntax and semantic diagnostics with file URIs and editor ranges,
+and exits with status 1 when errors are present. The viewer serves the same
+report at `/api/diagnostics` and the agent guide at `/api/guide`.
+
+`saml-map` and `saml-check` accept multiple repository paths. Each path is
+analyzed separately, and output is wrapped in a `workspaces` array with a
+`root` and `map` or `report` for each repository. A single path keeps the
+original output shape. The viewer can serve multiple roots in one process;
+`/api/workspaces` lists their session-local IDs, and `?workspace=<id>` selects
+the root for `/api/map` and `/api/diagnostics`.
+
 To explore the same map as a 3D graph in a browser, run:
 
 ```sh
