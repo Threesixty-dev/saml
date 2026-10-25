@@ -6,8 +6,8 @@ saved files and the semantic analyzer as the source of truth. Do not infer that
 a model is valid just because its prose sounds plausible.
 
 The tools can be installed with `cargo install --path /path/to/saml` from a
-checkout of the SAML repository. A host LLM needs file and command access, or
-local HTTP access to a running `saml-view` instance, to use these interfaces.
+checkout of the SAML repository. An MCP client can launch `saml-agent mcp`;
+other hosts need file and command access or local HTTP access to `saml-view`.
 
 ## Language essentials
 
@@ -46,10 +46,66 @@ The full current rules and known gaps are in `LANGUAGE_SPECIFICATION.md`,
    multi-repository service, register roots with `saml-agent add` and run
    `saml-agent run --config /path/to/agent.json`. Open
    `http://127.0.0.1:8787` for the graph. A tool-enabled LLM can fetch
-   `/api/guide`, `/api/diagnostics`, `/api/map`, `/api/workspaces`, and
-   `/api/status` from the same address. List IDs with `/api/workspaces` and
-   pass `?workspace=<id>` to `/api/map` or `/api/diagnostics`. The agent's
+   `/api/guide`, `/api/workflow`, `/api/diagnostics`, `/api/map`,
+   `/api/workspaces`, and `/api/status` from the same address. The agent's
    repository IDs remain stable as other repositories are added or removed.
+
+## Ask about a model element over MCP
+
+The MCP server is available with `saml-agent mcp --config
+/absolute/path/to/agent.json`. Register repositories with `saml-agent add`
+first. MCP clients discover typed tool inputs and receive short usage
+instructions during initialization. Follow the returned `get_workflow` steps:
+
+1. `list_workspaces` selects a persistent workspace ID.
+2. `search_model` finds a concept or materialization by name, kind, scope,
+   field, or property keyword. Follow `next_page` while more matches remain,
+   then follow the intended match's `next_tool` arguments. If a cursor is
+   rejected after the model changes, restart the search.
+3. `get_model_item` returns the exact item, its incoming and outgoing links,
+   bindings, and source URIs. Related items include their own `next_tool`.
+4. `read_model_source` reads an exact source URI from that workspace; compare
+   the saved text with the item's UTF-8 byte spans.
+5. `get_diagnostics` checks findings. `get_semantic_map` provides the complete
+   graph when needed; `get_guide` returns this guide.
+
+The server reports analyzer facts and does keyword lookup. Extract a model
+term from a broader question and explain any inference separately. See
+`MCP_SERVER.md` for client configuration and the full tool contract.
+
+## Ask about a model element over HTTP
+
+`GET /api/workflow` returns a machine-readable sequence for looking up one
+piece of a saved model. Use the same sequence with `saml-agent` or `saml-view`:
+
+1. Call `GET /api/workspaces` and choose a workspace ID. Include
+   `workspace=<id>` in subsequent requests. Without it, the first registered
+   workspace is selected.
+2. Extract a model name, concept word, or property name from the question and
+   call `GET /api/query?workspace=<id>&q=<URL-encoded keywords>`. Search is
+   case-insensitive and requires every keyword to occur in a concept or
+   materialization's indexed names. It does not interpret natural-language
+   questions. Results include a `kind`, an exact `id`, source definitions,
+   and a `detail_url`; at most 50 matches are returned, with `total` giving
+   the full count. Follow `next_url` until the intended item is found or no
+   page remains. If a cursor is rejected after the model changes, restart
+   the search.
+3. Follow a result's `detail_url`, or call
+   `GET /api/item?workspace=<id>&kind=<kind>&id=<URL-encoded id>`. Concept
+   details include property rules and materializations. Materialization
+   details include merged fields, parameters, incoming and outgoing resolved
+   links, and bindings. Equal names in different scopes have different IDs.
+4. Follow a URL in `sources` to retrieve the exact saved `.spec` or `.saml`
+   text with `GET /api/source?workspace=<id>&uri=<URL-encoded file URI>`.
+   Source spans use UTF-8 byte offsets in that text. Only sources belonging
+   to the selected model workspace can be retrieved.
+5. Call `GET /api/diagnostics?workspace=<id>` to check findings. Use
+   `GET /api/map?workspace=<id>` when the complete graph is needed.
+
+For example, to answer what `User` references, search for `User`, follow its
+materialization `detail_url`, inspect `outgoing_links`, then read the linked
+source and diagnostics. These endpoints report analyzer facts; the caller
+should explain any inference separately.
 
 If model files live outside the source repository, register the repository
 with `--model-root`:

@@ -40,7 +40,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = env::args().skip(1);
     let command = args
         .next()
-        .ok_or("usage: saml-agent <init|set-hub|add|remove|run> --config PATH ...")?;
+        .ok_or("usage: saml-agent <init|set-hub|add|remove|run|mcp> --config PATH ...")?;
     let mut config_path = None;
     let mut hub_url = None;
     let mut repo_path = None;
@@ -103,6 +103,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             config.save(&config_path)?;
             println!("Removed repository {id}");
         }
+        "mcp" => saml_lsp::mcp::serve(config_path)?,
         "run" => {
             let config = AgentConfig::load(&config_path)?;
             let token = env::var("SAML_AGENT_TOKEN").ok();

@@ -25,6 +25,16 @@ saml-agent add --config ./agent.json --repo /path/to/repo-b
 saml-agent run --config ./agent.json
 ```
 
+For an MCP client, launch the same agent registry over standard input/output:
+
+```sh
+saml-agent mcp --config /absolute/path/to/agent.json
+```
+
+The [MCP server guide](MCP_SERVER.md) lists its tools, connection setup, and
+step-by-step model lookup workflow. This mode does not need the HTTP portal or
+hub connection.
+
 If a repository's model is kept separately, register it with `--model-root`:
 
 ```sh
