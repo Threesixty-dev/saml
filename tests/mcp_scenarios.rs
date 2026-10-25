@@ -216,7 +216,9 @@ fn mcp_01_invalid_registry_fails_before_protocol_output() {
         .unwrap();
     assert!(!output.status.success());
     assert!(output.stdout.is_empty());
-    assert!(String::from_utf8_lossy(&output.stderr).contains(as_str(&missing)));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Cannot load MCP agent registry"));
+    assert!(stderr.contains("missing.json"));
     let root = unique_root();
     fs::create_dir_all(&root).unwrap();
     let malformed = root.join("invalid.json");
@@ -228,7 +230,7 @@ fn mcp_01_invalid_registry_fails_before_protocol_output() {
     assert!(!output.status.success());
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains(as_str(&malformed)) && stderr.contains("EOF"));
+    assert!(stderr.contains("invalid.json") && stderr.contains("EOF"));
     let unsupported = root.join("unsupported.json");
     let mut config = AgentConfig::new(None).unwrap();
     config.schema_version += 1;
