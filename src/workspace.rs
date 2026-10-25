@@ -63,43 +63,33 @@ pub fn collect_sources_checked(
 }
 
 pub fn uri_to_path(uri: &str) -> Option<PathBuf> {
-    let rest = uri.strip_prefix("file://")?;
-    let rest = rest.strip_prefix("localhost").unwrap_or(rest);
-    if !rest.starts_with('/') {
+    let url = reqwest::Url::parse(uri).ok()?;
+    if url.scheme() != "file" || url.query().is_some() || url.fragment().is_some() {
         return None;
     }
-    let bytes = rest.as_bytes();
-    let mut result = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index] == b'%' && index + 2 < bytes.len() {
-            let value = u8::from_str_radix(&rest[index + 1..index + 3], 16).ok()?;
-            result.push(value);
-            index += 3;
-        } else {
-            result.push(bytes[index]);
-            index += 1;
-        }
-    }
-    String::from_utf8(result).ok().map(PathBuf::from)
+    url.to_file_path().ok()
 }
 
 pub fn path_to_uri(path: &Path) -> String {
-    let mut result = String::from("file://");
-    for byte in path.to_string_lossy().bytes() {
-        if byte.is_ascii_alphanumeric() || b"/-._~".contains(&byte) {
-            result.push(byte as char);
-        } else {
-            result.push_str(&format!("%{byte:02X}"));
-        }
-    }
-    result
+    reqwest::Url::from_file_path(path)
+        .expect("workspace file path must be absolute")
+        .to_string()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn file_uri_round_trips_platform_paths() {
+        let path = std::env::current_dir()
+            .unwrap()
+            .join("project/example-1/spec.saml");
+        let uri = path_to_uri(&path);
+        assert!(uri.ends_with("/spec.saml"));
+        assert_eq!(uri_to_path(&uri), Some(path));
+    }
 
     #[test]
     fn nested_repository_does_not_contribute_to_parent_workspace() {
