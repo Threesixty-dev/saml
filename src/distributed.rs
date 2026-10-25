@@ -1,10 +1,8 @@
-use crate::diagnostics::diagnostic_report;
-use crate::semantic::analyze;
-use crate::workspace::collect_sources_checked;
+use crate::repository_info::{self, RepositoryInfo, HUB_LIMITS};
 use atomic_write_file::AtomicWriteFile;
 use semver::Version;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -51,6 +49,8 @@ pub struct Heartbeat {
 pub struct RepositoryHealth {
     pub id: String,
     pub health: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub details: Option<RepositoryInfo>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -153,32 +153,20 @@ impl AgentConfig {
             .repositories
             .iter()
             .map(|repo| {
+                let details = repository_info::inspect(repo, HUB_LIMITS);
                 let health = if !repo.root.is_dir() {
                     "missing"
+                } else if !details.model.available {
+                    "unavailable"
+                } else if details.model.source_file_count == 0 || details.model.errors > 0 {
+                    "degraded"
                 } else {
-                    let mut sources = HashMap::new();
-                    let model_root = repo.model_root.as_deref().unwrap_or(&repo.root);
-                    match collect_sources_checked(model_root, &mut sources) {
-                        Err(_) => "unavailable",
-                        Ok(()) => {
-                            if sources.is_empty() {
-                                return RepositoryHealth {
-                                    id: repo.id.clone(),
-                                    health: "degraded".into(),
-                                };
-                            }
-                            let map = analyze(&sources);
-                            if diagnostic_report(&sources, &map).errors > 0 {
-                                "degraded"
-                            } else {
-                                "healthy"
-                            }
-                        }
-                    }
+                    "healthy"
                 };
                 RepositoryHealth {
                     id: repo.id.clone(),
                     health: health.into(),
+                    details: Some(details),
                 }
             })
             .collect();
@@ -187,7 +175,7 @@ impl AgentConfig {
         } else {
             "healthy"
         };
-        Heartbeat {
+        let mut heartbeat = Heartbeat {
             schema_version: PROTOCOL_VERSION,
             agent_id: self.agent_id.clone(),
             version: env!("CARGO_PKG_VERSION").into(),
@@ -195,7 +183,15 @@ impl AgentConfig {
             arch: std::env::consts::ARCH.into(),
             health: health.into(),
             repositories,
+        };
+        for index in (0..heartbeat.repositories.len()).rev() {
+            // Keep the health of every repo even when a fleet exceeds the hub body limit.
+            if serde_json::to_vec(&heartbeat).is_ok_and(|body| body.len() <= 60 * 1024) {
+                break;
+            }
+            heartbeat.repositories[index].details = None;
         }
+        heartbeat
     }
 }
 
@@ -217,7 +213,15 @@ impl HubState {
         let sample = HealthSample {
             at_unix_secs: now,
             health: heartbeat.health.clone(),
-            repositories: heartbeat.repositories.clone(),
+            repositories: heartbeat
+                .repositories
+                .iter()
+                .map(|repo| RepositoryHealth {
+                    id: repo.id.clone(),
+                    health: repo.health.clone(),
+                    details: None,
+                })
+                .collect(),
         };
         let record = self
             .agents
@@ -304,6 +308,7 @@ pub fn validate_heartbeat(heartbeat: &Heartbeat) -> io::Result<()> {
         || heartbeat.arch.len() > 32
         || !matches!(heartbeat.health.as_str(), "healthy" | "degraded")
         || heartbeat.repositories.len() > 1000
+        || serde_json::to_vec(heartbeat).map_or(true, |body| body.len() > 60 * 1024)
     {
         return Err(invalid("invalid heartbeat"));
     }
@@ -398,8 +403,40 @@ mod tests {
         assert_eq!(heartbeat.repositories[0].health, "healthy");
         assert_eq!(heartbeat.repositories[1].id, bad_id);
         assert_eq!(heartbeat.repositories[1].health, "degraded");
-        let serialized = serde_json::to_string(&heartbeat).unwrap();
-        assert!(!serialized.contains(root.to_str().unwrap()));
+        assert_eq!(
+            heartbeat.repositories[0]
+                .details
+                .as_ref()
+                .unwrap()
+                .model
+                .concept_count,
+            1
+        );
+        assert!(
+            heartbeat.repositories[1]
+                .details
+                .as_ref()
+                .unwrap()
+                .model
+                .errors
+                > 0
+        );
+        let serialized = serde_json::to_value(&heartbeat).unwrap();
+        assert_eq!(
+            serialized["repositories"][0]["details"]["path"],
+            loaded.repositories[0].root.to_string_lossy().as_ref()
+        );
+        let mut state = HubState::default();
+        state.record(heartbeat.clone()).unwrap();
+        assert!(state.agents[&config.agent_id].heartbeat.repositories[0]
+            .details
+            .is_some());
+        assert!(state.agents[&config.agent_id].history[0].repositories[0]
+            .details
+            .is_none());
+        let mut oversized = heartbeat;
+        oversized.repositories[0].details.as_mut().unwrap().name = "x".repeat(61 * 1024);
+        assert!(validate_heartbeat(&oversized).is_err());
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -426,6 +463,29 @@ mod tests {
         fs::remove_file(root.join("model/spec.saml")).unwrap();
         assert_eq!(config.heartbeat().repositories[0].health, "degraded");
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn large_fleet_keeps_every_health_when_details_exceed_hub_limit() {
+        let mut config = AgentConfig::new(None).unwrap();
+        for index in 0..200 {
+            config.repositories.push(RegisteredRepository {
+                id: Uuid::new_v4().to_string(),
+                root: std::env::temp_dir().join(format!("{}-{index}", "missing".repeat(24))),
+                model_root: None,
+            });
+        }
+        let heartbeat = config.heartbeat();
+        assert_eq!(heartbeat.repositories.len(), 200);
+        assert!(heartbeat
+            .repositories
+            .iter()
+            .any(|repository| repository.details.is_none()));
+        assert!(heartbeat
+            .repositories
+            .iter()
+            .all(|repository| repository.health == "missing"));
+        validate_heartbeat(&heartbeat).unwrap();
     }
 
     #[test]

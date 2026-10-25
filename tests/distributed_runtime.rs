@@ -169,7 +169,7 @@ fn hub_initializes_empty_credentials_on_fresh_volume() {
 }
 
 #[test]
-fn hub_receives_only_version_and_isolated_repository_health() {
+fn hub_receives_repository_details_and_keeps_history_compact() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -233,8 +233,8 @@ fn hub_receives_only_version_and_isolated_repository_health() {
             as_str(&root.join("bad")),
         ],
     );
-    let config: Value = serde_json::from_slice(&fs::read(&config_path).unwrap()).unwrap();
-    let agent_id = config["agent_id"].as_str().unwrap();
+    let agent_config: Value = serde_json::from_slice(&fs::read(&config_path).unwrap()).unwrap();
+    let agent_id = agent_config["agent_id"].as_str().unwrap();
     let provision = command(
         env!("CARGO_BIN_EXE_saml-hub"),
         &["provision", agent_id, as_str(&credentials_path)],
@@ -340,6 +340,18 @@ fn hub_receives_only_version_and_isolated_repository_health() {
     assert_eq!(rejected.status(), 401);
     assert!(!state_path.exists());
 
+    let mut legacy = serde_json::to_value(&heartbeat).unwrap();
+    for repository in legacy["repositories"].as_array_mut().unwrap() {
+        repository.as_object_mut().unwrap().remove("details");
+    }
+    let accepted = client
+        .post(format!("{base}/api/v1/heartbeat"))
+        .bearer_auth(token)
+        .json(&legacy)
+        .send()
+        .unwrap();
+    assert_eq!(accepted.status(), 202);
+
     let output = Command::new(env!("CARGO_BIN_EXE_saml-agent"))
         .args(["run", "--config", as_str(&config_path), "--once"])
         .env("SAML_AGENT_TOKEN", token)
@@ -365,6 +377,25 @@ fn hub_receives_only_version_and_isolated_repository_health() {
     assert_eq!(heartbeat["version"], env!("CARGO_PKG_VERSION"));
     assert_eq!(heartbeat["repositories"][0]["health"], "healthy");
     assert_eq!(heartbeat["repositories"][1]["health"], "degraded");
+    assert_eq!(heartbeat["repositories"][0]["details"]["name"], "good");
+    assert_eq!(
+        heartbeat["repositories"][0]["details"]["model"]["concept_count"],
+        1
+    );
+    assert!(
+        heartbeat["repositories"][1]["details"]["model"]["errors"]
+            .as_u64()
+            .unwrap()
+            > 0
+    );
+    assert_eq!(
+        heartbeat["repositories"][0]["details"]["git"]["available"],
+        false
+    );
+    let history = &registry["agents"][agent_id]["history"];
+    assert_eq!(history.as_array().unwrap().len(), 2);
+    assert!(history[0]["repositories"][0].get("details").is_none());
+    assert!(history[1]["repositories"][0].get("details").is_none());
     let failed = UpdateEvent {
         schema_version: PROTOCOL_VERSION,
         agent_id: agent_id.into(),
@@ -417,7 +448,12 @@ fn hub_receives_only_version_and_isolated_repository_health() {
     assert_eq!(updates[0]["outcome"], "rolled_back");
     assert_eq!(updates[1]["outcome"], "installed");
     let saved = fs::read_to_string(&state_path).unwrap();
-    assert!(!saved.contains(as_str(&root)));
+    let saved_state: Value = serde_json::from_str(&saved).unwrap();
+    assert_eq!(
+        saved_state["agents"][agent_id]["heartbeat"]["repositories"][0]["details"]["path"],
+        agent_config["repositories"][0]["root"]
+    );
+    assert!(!saved.contains("concept Entity {}"));
     assert!(!saved.contains(token));
     assert!(!saved.contains(admin_token));
     #[cfg(unix)]

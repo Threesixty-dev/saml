@@ -1,5 +1,6 @@
 use crate::diagnostics::diagnostic_report;
 use crate::distributed::{AgentConfig, RegisteredRepository};
+use crate::repository_info::{self, LOCAL_LIMITS};
 use crate::semantic::analyze;
 use crate::semantic_query;
 use crate::workspace::collect_sources_checked;
@@ -15,7 +16,7 @@ use std::collections::HashMap;
 use std::io;
 use std::path::PathBuf;
 
-const INSTRUCTIONS: &str = "Call get_workflow first. Select a workspace with list_workspaces, search for a model name or property with search_model, follow next_page if needed, inspect the exact ID with get_model_item, read its source with read_model_source, and check get_diagnostics. All data comes from saved local .spec and .saml files.";
+const INSTRUCTIONS: &str = "Call get_workflow first. Select a workspace with list_workspaces. For repository identity, Git state, model inventory, and diagnostics call get_repository_info; for focused Git details call get_repository_git and page through get_repository_git_history. To investigate one model piece, search_model, follow next_page, inspect the exact ID with get_model_item, read its source, and check get_diagnostics. Model data comes from saved local .spec and .saml files.";
 
 #[derive(Clone)]
 pub struct SamlMcp {
@@ -31,6 +32,17 @@ struct EmptyInput {}
 struct WorkspaceInput {
     /// Persistent repository ID returned by list_workspaces.
     workspace_id: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct GitHistoryInput {
+    /// Persistent repository ID returned by list_workspaces.
+    workspace_id: String,
+    /// Zero-based commit offset. Use next_offset from the preceding page.
+    offset: Option<usize>,
+    /// Number of commits per page, from 1 to 100; defaults to 50.
+    limit: Option<usize>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -141,6 +153,52 @@ impl SamlMcp {
     }
 
     #[tool(
+        description = "Inspect one repository: identity and paths, model inventory and diagnostics summary, Git changes, branches, and recent commits. Lists are bounded; use get_semantic_map and get_diagnostics for complete model data."
+    )]
+    fn get_repository_info(&self, Parameters(input): Parameters<WorkspaceInput>) -> CallToolResult {
+        match self.repository(&input.workspace_id) {
+            Ok(repo) => {
+                CallToolResult::structured(json!(repository_info::inspect(&repo, LOCAL_LIMITS)))
+            }
+            Err(error) => tool_error(error),
+        }
+    }
+
+    #[tool(
+        description = "Inspect Git state for one registered repository: worktree, branch, HEAD, changes, local and remote branches, and recent commits. Returns available=false for non-Git directories."
+    )]
+    fn get_repository_git(&self, Parameters(input): Parameters<WorkspaceInput>) -> CallToolResult {
+        match self.repository(&input.workspace_id) {
+            Ok(repo) => CallToolResult::structured(json!(repository_info::inspect_git(
+                &repo.root,
+                LOCAL_LIMITS
+            ))),
+            Err(error) => tool_error(error),
+        }
+    }
+
+    #[tool(
+        description = "Page through commit history for a registered repository. Start at offset 0 and follow next_offset until it is null; limit is 1 to 100."
+    )]
+    fn get_repository_git_history(
+        &self,
+        Parameters(input): Parameters<GitHistoryInput>,
+    ) -> CallToolResult {
+        let limit = input.limit.unwrap_or(50);
+        if !(1..=100).contains(&limit) {
+            return tool_error("limit must be between 1 and 100");
+        }
+        match self.repository(&input.workspace_id) {
+            Ok(repo) => CallToolResult::structured(json!(repository_info::inspect_git_history(
+                &repo.root,
+                input.offset.unwrap_or(0),
+                limit
+            ))),
+            Err(error) => tool_error(error),
+        }
+    }
+
+    #[tool(
         description = "Get the step-by-step workflow for finding, inspecting, and verifying one piece of a SAML semantic model."
     )]
     fn get_workflow(&self, Parameters(_input): Parameters<EmptyInput>) -> CallToolResult {
@@ -152,6 +210,12 @@ impl SamlMcp {
                 {"step": 3, "tool": "get_model_item", "instruction": "Pass the exact kind and ID from a search match. Inspect properties, incoming and outgoing links, bindings, and related IDs."},
                 {"step": 4, "tool": "read_model_source", "instruction": "Pass a source URI from the item. Verify the saved declaration text; source spans use UTF-8 byte offsets."},
                 {"step": 5, "tool": "get_diagnostics", "instruction": "Check syntax and semantic findings before relying on the answer."}
+            ],
+            "repository_steps": [
+                {"step": 1, "tool": "list_workspaces", "instruction": "Choose one registered repository ID."},
+                {"step": 2, "tool": "get_repository_info", "instruction": "Read identity, model inventory and diagnostics summary, Git state, branches, and recent commits. Lists are bounded and carry counts and truncated flags."},
+                {"step": 3, "tool": "get_repository_git", "instruction": "Use for a focused Git view."},
+                {"step": 4, "tool": "get_repository_git_history", "instruction": "For older commits, start at offset 0 and follow next_offset until null. Use get_semantic_map and get_diagnostics for complete model data."}
             ],
             "complete_graph_tool": "get_semantic_map",
             "guide_tool": "get_guide",

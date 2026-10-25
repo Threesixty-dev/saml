@@ -47,7 +47,7 @@ The full current rules and known gaps are in `LANGUAGE_SPECIFICATION.md`,
    `saml-agent run --config /path/to/agent.json`. Open
    `http://127.0.0.1:8787` for the graph. A tool-enabled LLM can fetch
    `/api/guide`, `/api/workflow`, `/api/diagnostics`, `/api/map`,
-   `/api/workspaces`, and `/api/status` from the same address. The agent's
+   `/api/workspaces`, `/api/repository`, `/api/git`, and `/api/status` from the same address. The agent's
    repository IDs remain stable as other repositories are added or removed.
 
 ## Ask about a model element over MCP
@@ -68,6 +68,14 @@ instructions during initialization. Follow the returned `get_workflow` steps:
    the saved text with the item's UTF-8 byte spans.
 5. `get_diagnostics` checks findings. `get_semantic_map` provides the complete
    graph when needed; `get_guide` returns this guide.
+
+For repository-wide questions, call `list_workspaces`, then
+`get_repository_info`. It reports identity and paths, a bounded semantic
+inventory and diagnostics summary, working-tree changes, branches, and recent
+commits. Use `get_repository_git` for a focused Git response and
+`get_repository_git_history` to page through older commits. Counts describe
+the full repository even when lists are truncated; use `get_semantic_map` and
+`get_diagnostics` for complete model data.
 
 The server reports analyzer facts and does keyword lookup. Extract a model
 term from a broader question and explain any inference separately. See
@@ -101,6 +109,11 @@ piece of a saved model. Use the same sequence with `saml-agent` or `saml-view`:
    to the selected model workspace can be retrieved.
 5. Call `GET /api/diagnostics?workspace=<id>` to check findings. Use
    `GET /api/map?workspace=<id>` when the complete graph is needed.
+
+`GET /api/repository?workspace=<id>` and `GET /api/git?workspace=<id>` provide
+the same repository and Git snapshots to local HTTP clients. For older commits,
+use `GET /api/git/history?workspace=<id>&offset=0&limit=50` and follow
+`next_offset` until it is null.
 
 For example, to answer what `User` references, search for `User`, follow its
 materialization `detail_url`, inspect `outgoing_links`, then read the linked

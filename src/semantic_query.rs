@@ -15,6 +15,12 @@ pub fn workflow() -> Value {
             {"action": "read_source", "request": "GET /api/source?workspace={workspace_id}&uri={url_encoded_source_uri}", "instruction": "Follow a source URL from item details to verify saved declaration text. Spans use UTF-8 byte offsets."},
             {"action": "check_model", "request": "GET /api/diagnostics?workspace={workspace_id}", "instruction": "Check syntax and semantic findings before relying on the answer."}
         ],
+        "repository_steps": [
+            {"action": "select_workspace", "request": "GET /api/workspaces", "instruction": "Choose a registered repository ID."},
+            {"action": "inspect_repository", "request": "GET /api/repository?workspace={workspace_id}", "instruction": "Read identity, model inventory and diagnostics summary, Git state, branches, and recent commits. Counts describe the full repository even if lists are truncated."},
+            {"action": "inspect_git", "request": "GET /api/git?workspace={workspace_id}", "instruction": "Use for a focused Git view."},
+            {"action": "page_git_history", "request": "GET /api/git/history?workspace={workspace_id}&offset={offset}&limit={limit}", "instruction": "For older commits, start at offset 0 and follow next_offset until null. Use /api/map and /api/diagnostics for complete model data."}
+        ],
         "full_map": "GET /api/map?workspace={workspace_id}"
     })
 }

@@ -66,7 +66,80 @@ function renderUpdates(updates) {
   return section;
 }
 
-function renderAgent(id, record, now, updates) {
+function detailList(title, values, format = value => value) {
+  const section = element('section', 'repo-detail-section');
+  section.append(element('h4', '', title));
+  if (!values.length) {
+    section.append(element('p', 'repo-detail-empty', 'None reported'));
+    return section;
+  }
+  const list = element('ul', 'repo-detail-list');
+  for (const value of values) list.append(element('li', '', format(value)));
+  section.append(list);
+  return section;
+}
+
+function renderRepository(repository, agentId, openRepos) {
+  const details = repository.details;
+  const row = element('details', 'repo');
+  row.dataset.key = `${agentId}:${repository.id}`;
+  row.open = openRepos.has(row.dataset.key);
+  const summary = element('summary', 'repo-summary');
+  const heading = element('span', 'repo-heading');
+  heading.append(element('strong', 'repo-name', details?.name || repository.id.slice(0, 18)));
+  heading.append(element('span', 'repo-subtitle', details
+    ? `${details.git.branch || 'detached / no Git'} · ${details.model.concept_count} concepts · ${details.model.materialization_count} items`
+    : repository.id));
+  summary.append(heading, badge(repository.health));
+  row.append(summary);
+  if (!details) {
+    row.append(element('p', 'repo-detail-empty', 'Details are unavailable in this report.'));
+    return row;
+  }
+
+  const body = element('div', 'repo-detail-body');
+  const path = element('div', 'repo-paths');
+  path.append(element('span', '', `SOURCE  ${details.path}`));
+  path.append(element('span', '', `MODEL   ${details.model_root}`));
+  body.append(path);
+
+  const model = details.model;
+  const git = details.git;
+  const metrics = element('div', 'repo-facts');
+  for (const [label, value] of [
+    ['SOURCE FILES', model.source_file_count], ['CONCEPTS', model.concept_count],
+    ['ITEMS', model.materialization_count], ['LINKS', model.link_count],
+    ['BINDINGS', model.binding_count], ['ERRORS', model.errors],
+    ['WARNINGS', model.warnings], ['GIT CHANGES', git.change_count],
+  ]) {
+    const fact = element('div', 'repo-fact');
+    fact.append(element('strong', '', String(value)), element('span', '', label));
+    metrics.append(fact);
+  }
+  body.append(metrics);
+  if (!model.available) body.append(element('p', 'repo-detail-empty', 'Model workspace is unavailable.'));
+
+  const grid = element('div', 'repo-detail-grid');
+  grid.append(detailList('Concepts', model.concepts));
+  grid.append(detailList('Model items', model.materializations, item => `${item.kind} ${item.name} · ${item.id}`));
+  grid.append(detailList('Model sources', model.source_uris));
+  grid.append(detailList('Diagnostics', model.diagnostics, item => `${item.severity.toUpperCase()} ${item.code || 'syntax'} · ${item.message} · ${item.uri}`));
+  if (git.available) {
+    grid.append(detailList('Branches', git.branches));
+    grid.append(detailList('Recent commits', git.recent_commits, item => `${item.id.slice(0, 9)} · ${item.subject} · ${item.authored_at}`));
+    grid.append(detailList('Working tree', git.changes, item => `${item.status} ${item.path}`));
+  } else {
+    grid.append(detailList('Git', ['No Git worktree detected']));
+  }
+  body.append(grid);
+  if (model.truncated || git.truncated) {
+    body.append(element('p', 'repo-truncated', 'Some lists are shortened for the dashboard. Counts reflect the full repository.'));
+  }
+  row.append(body);
+  return row;
+}
+
+function renderAgent(id, record, now, updates, openRepos, expandedAgents) {
   const heartbeat = record.heartbeat;
   const age = Math.max(0, now - record.last_seen_unix_secs);
   const stale = age > 90;
@@ -87,16 +160,24 @@ function renderAgent(id, record, now, updates) {
   main.append(top, name, meta, history);
 
   const repos = element('div', 'agent-repos');
+  repos.dataset.agent = id;
+  repos.dataset.expanded = expandedAgents.has(id) ? 'true' : 'false';
   repos.append(element('div', 'repo-title', `REPOSITORIES / ${heartbeat.repositories.length}`));
-  for (const repository of heartbeat.repositories.slice(0, 30)) {
-    const row = element('div', 'repo');
-    const repoId = element('span', 'repo-id', repository.id.slice(0, 18));
-    repoId.title = repository.id;
-    row.append(repoId, badge(repository.health));
-    repos.append(row);
+  const visible = expandedAgents.has(id) ? heartbeat.repositories : heartbeat.repositories.slice(0, 30);
+  for (const repository of visible) {
+    repos.append(renderRepository(repository, id, openRepos));
   }
-  if (heartbeat.repositories.length > 30) {
-    repos.append(element('p', 'repo-count', `+ ${heartbeat.repositories.length - 30} more repositories`));
+  if (!expandedAgents.has(id) && heartbeat.repositories.length > 30) {
+    const more = element('button', 'repo-more', `SHOW ${heartbeat.repositories.length - 30} MORE REPOSITORIES`);
+    more.type = 'button';
+    more.addEventListener('click', () => {
+      for (const repository of heartbeat.repositories.slice(30)) {
+        repos.insertBefore(renderRepository(repository, id, openRepos), more);
+      }
+      repos.dataset.expanded = 'true';
+      more.remove();
+    });
+    repos.append(more);
   }
   if (!heartbeat.repositories.length) {
     repos.append(element('p', 'repo-count', 'No repositories registered'));
@@ -106,6 +187,8 @@ function renderAgent(id, record, now, updates) {
 }
 
 function render(data) {
+  const openRepos = new Set([...fleet.querySelectorAll('details.repo[open]')].map(item => item.dataset.key));
+  const expandedAgents = new Set([...fleet.querySelectorAll('.agent-repos[data-expanded="true"]')].map(item => item.dataset.agent));
   const entries = Object.entries(data.agents || {})
     .sort((left, right) => right[1].last_seen_unix_secs - left[1].last_seen_unix_secs);
   const now = data.observed_at_unix_secs;
@@ -125,7 +208,7 @@ function render(data) {
   document.querySelector('#attention-count').textContent = attention;
   document.querySelector('#updated-at').textContent = `UPDATED ${new Date(now * 1000).toLocaleTimeString()}`;
   fleet.replaceChildren(...entries.map(([id, record]) =>
-    renderAgent(id, record, now, data.update_events?.[id] || [])));
+    renderAgent(id, record, now, data.update_events?.[id] || [], openRepos, expandedAgents)));
   document.querySelector('#empty').hidden = entries.length > 0;
 }
 

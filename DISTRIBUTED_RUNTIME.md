@@ -1,12 +1,12 @@
 # Distributed SAML runtime
 
 Status: `saml-agent` manages multiple repositories, serves the local portal
-and LLM API, and sends health/version heartbeats to the self-hosted
+and LLM API, and sends repository-detail heartbeats to the self-hosted
 `saml-hub`. The hub serves a fleet dashboard and signed agent releases.
 `saml-launcher` verifies and installs agent updates.
 
-Initial decisions: the hub is self-hosted; agents install approved updates
-automatically; the first telemetry scope is health and version information.
+The hub is self-hosted; agents install approved updates automatically. Its
+telemetry now includes bounded repository details alongside health and version.
 
 ## Components
 
@@ -33,7 +33,8 @@ deployment. It observes running agents. The local analyzer remains usable
 without hub access.
 
 Repository registration uses a persistent opaque ID per local checkout
-and a canonical root path in the agent's local configuration. Paths stay local.
+and a canonical root path in the agent's local configuration. The configured
+source and model paths are included in the authenticated hub snapshot.
 Adding or removing a repository should not require another agent installation.
 The agent portal uses persistent repository IDs and reloads its registry on
 every API request. The running agent also reloads it before each heartbeat.
@@ -48,23 +49,23 @@ HTTPS requests. Loopback HTTP is allowed for local development. The protocol
 uses periodic heartbeats; no inbound connection to the user's machine is
 required. A heartbeat includes a stable agent ID, app version, OS,
 architecture, agent health, and one opaque ID and health state per repository.
+Each repository also reports its name and paths, model inventory and diagnostics
+summary, Git working-tree changes, branches, and recent commit subjects.
 It has a schema version so agent and hub releases can evolve independently.
 The hub records last-seen state and the latest 100 samples per agent in an
 atomically replaced JSON file, exposed by an authenticated API. A central
-dashboard shows recent presence, versions, repository health, and history.
+dashboard shows recent presence, versions, repository details, and health history.
 The launcher also reports verified release attempts to the hub. OpenTelemetry
 export remains future work.
 
-The heartbeat reports an opaque ID and health state for each registered
-repository without sending its path or model data. An unhealthy repository
-must not make unrelated repositories unavailable. The hub can distinguish
-agent health from per-repository analysis health.
-
-The initial heartbeat excludes model source, semantic maps, diagnostics, file
-paths, and LLM prompts. Sending any of these later requires an explicit data
-policy. The agent should make its current telemetry level visible in the local
-portal. The hub should not be a required dependency for local checking or LLM
-use.
+Inventory and Git lists are bounded, with full counts and truncation flags.
+When a fleet exceeds the heartbeat size limit, repository health is retained
+and some detail snapshots are omitted. Health history stores only IDs and
+health states, keeping it compact. The heartbeat contains metadata and
+diagnostic messages but no model source text, complete semantic maps, LLM
+prompts, credentials, or Git remote URLs. The agent reports its telemetry level
+at `/api/status`. Local checking and MCP use remain available without the hub.
+An unhealthy repository does not make unrelated repositories unavailable.
 
 ## Run the connected slice
 
@@ -287,7 +288,7 @@ The central hub observes agents; it does not need access to the local portal.
 4. Done for the initial channel: the hub serves signed release metadata and
    targets; the launcher verifies and stages updates with startup rollback.
    Full TUF metadata, key rotation, and staged deployment remain planned.
-5. Done: add a central dashboard for health and versions. Deployment channels
+5. Done: add a central dashboard for health, versions, and repository details. Deployment channels
    remain planned. Expand telemetry only after its data policy is specified.
 
 ## References

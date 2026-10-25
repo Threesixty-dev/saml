@@ -138,6 +138,9 @@ fn mcp_stdio_exposes_workflow_and_model_evidence() {
         "get_diagnostics",
         "get_semantic_map",
         "get_guide",
+        "get_repository_info",
+        "get_repository_git",
+        "get_repository_git_history",
     ] {
         assert!(
             tools.iter().any(|tool| tool["name"] == name),
@@ -158,6 +161,10 @@ fn mcp_stdio_exposes_workflow_and_model_evidence() {
     assert_eq!(
         workflow["structuredContent"]["steps"][2]["tool"],
         "get_model_item"
+    );
+    assert_eq!(
+        workflow["structuredContent"]["repository_steps"][1]["tool"],
+        "get_repository_info"
     );
     let workspaces = fixture.call(4, "list_workspaces", json!({}));
     let workspace_id = workspaces["structuredContent"]["workspaces"][0]["id"]
@@ -271,4 +278,31 @@ fn mcp_stdio_exposes_workflow_and_model_evidence() {
             .len(),
         2
     );
+    let info = fixture.call(
+        15,
+        "get_repository_info",
+        json!({"workspace_id": workspace_id}),
+    );
+    let info = &info["structuredContent"];
+    assert_eq!(info["name"], "source-repo");
+    assert_eq!(
+        info["model_root"],
+        as_str(&fixture.root.join("model-repo").canonicalize().unwrap())
+    );
+    assert_eq!(info["model"]["source_file_count"], 2);
+    assert_eq!(info["model"]["concepts"][0], "entity");
+    assert_eq!(info["model"]["materialization_count"], 2);
+    assert_eq!(info["git"]["available"], false);
+    let git = fixture.call(
+        16,
+        "get_repository_git",
+        json!({"workspace_id": workspace_id}),
+    );
+    assert_eq!(git["structuredContent"]["available"], false);
+    let history = fixture.call(
+        17,
+        "get_repository_git_history",
+        json!({"workspace_id": workspace_id, "offset": 0, "limit": 10}),
+    );
+    assert_eq!(history["structuredContent"]["available"], false);
 }
