@@ -114,14 +114,26 @@ for that tab.
 
 `Dockerfile.hub` builds only the hub. In Coolify, deploy it from a Git
 repository using that Dockerfile, or publish the image to a registry and use
-the Docker Image resource. Route `https://saml.coolify.threesixty.dev` to
-container port `8765` through the Coolify HTTPS proxy. Do not configure a
+the Docker Image resource. On ThreeSixty, configure the Coolify domain as
+`http://saml.coolify.threesixty.dev` to route to container port `8765`.
+Cloudflare forces public HTTP requests to HTTPS; enabling Coolify's HTTPS
+redirect on this internal route creates a redirect loop. Do not configure a
 public host port. Mount persistent storage at `/data` and set the secret
 environment variable `SAML_HUB_ADMIN_TOKEN` to at least 32 random characters.
 The image already sets `SAML_HUB_BIND`, `SAML_HUB_ALLOW_NON_LOOPBACK`,
 `SAML_HUB_STATE`, and `SAML_HUB_CREDENTIALS`. It runs as UID 10001, so a bind
 mount must be writable by that UID. Set the HTTP health check path to
 `/healthz` (the image also includes a Docker health check).
+
+If the hostname is behind Cloudflare Access, give SAML its own self-hosted
+Access application for `saml.coolify.threesixty.dev`. Keep a human login
+policy for the dashboard and a Service Auth policy for agents. Each agent
+then needs a Cloudflare Access service token as well as its own SAML agent
+token. Set `SAML_CF_ACCESS_CLIENT_ID` and `SAML_CF_ACCESS_CLIENT_SECRET` in
+the agent's environment; the agent sends them as `CF-Access-Client-Id` and
+`CF-Access-Client-Secret` headers on heartbeats. Both variables must be set
+together. Keep them out of `agent.json` and the repository. The administrator
+dashboard still requires `SAML_HUB_ADMIN_TOKEN` after Cloudflare login.
 
 From the deployed container's Coolify terminal, provision each agent's ID:
 

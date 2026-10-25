@@ -7,6 +7,35 @@ use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Duration;
 
+struct CloudflareAccess {
+    client_id: String,
+    client_secret: String,
+}
+
+impl CloudflareAccess {
+    fn from_env() -> Result<Option<Self>, &'static str> {
+        let client_id = env::var("SAML_CF_ACCESS_CLIENT_ID").ok();
+        let client_secret = env::var("SAML_CF_ACCESS_CLIENT_SECRET").ok();
+        match (client_id, client_secret) {
+            (None, None) => Ok(None),
+            (Some(client_id), Some(client_secret))
+                if !client_id.is_empty()
+                    && !client_secret.is_empty()
+                    && reqwest::header::HeaderValue::from_str(&client_id).is_ok()
+                    && reqwest::header::HeaderValue::from_str(&client_secret).is_ok() =>
+            {
+                Ok(Some(Self {
+                    client_id,
+                    client_secret,
+                }))
+            }
+            _ => {
+                Err("set valid SAML_CF_ACCESS_CLIENT_ID and SAML_CF_ACCESS_CLIENT_SECRET together")
+            }
+        }
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = env::args().skip(1);
     let command = args
@@ -68,6 +97,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "run" => {
             let config = AgentConfig::load(&config_path)?;
             let token = env::var("SAML_AGENT_TOKEN").ok();
+            let cloudflare_access = CloudflareAccess::from_env()?;
             if token.as_deref().is_some_and(|value| value.len() < 32) {
                 return Err("SAML_AGENT_TOKEN must be at least 32 characters".into());
             }
@@ -107,7 +137,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .max(5);
             loop {
                 if let Some(token) = &token {
-                    match send_once(&client, &config_path, token) {
+                    match send_once(&client, &config_path, token, cloudflare_access.as_ref()) {
                         Ok(()) => println!("Heartbeat sent"),
                         Err(error) if once => return Err(error),
                         Err(error) => eprintln!("Heartbeat failed: {error}"),
@@ -128,6 +158,7 @@ fn send_once(
     client: &reqwest::blocking::Client,
     config_path: &Path,
     token: &str,
+    cloudflare_access: Option<&CloudflareAccess>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let config = AgentConfig::load(config_path)?;
     let hub_url = config
@@ -135,11 +166,16 @@ fn send_once(
         .as_deref()
         .ok_or("hub URL is not configured")?;
     let url = format!("{}/api/v1/heartbeat", hub_url.trim_end_matches('/'));
-    let response = client
+    let mut request = client
         .post(url)
         .bearer_auth(token)
-        .json(&config.heartbeat())
-        .send()?;
+        .json(&config.heartbeat());
+    if let Some(access) = cloudflare_access {
+        request = request
+            .header("CF-Access-Client-Id", &access.client_id)
+            .header("CF-Access-Client-Secret", &access.client_secret);
+    }
+    let response = request.send()?;
     if !response.status().is_success() {
         return Err(io::Error::other(format!(
             "hub rejected heartbeat: HTTP {}",

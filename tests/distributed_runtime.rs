@@ -1,6 +1,7 @@
 use saml_lsp::distributed::AgentConfig;
 use serde_json::Value;
 use std::fs;
+use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -32,6 +33,56 @@ fn command(binary: &str, args: &[&str]) -> std::process::Output {
 
 fn as_str(path: &Path) -> &str {
     path.to_str().unwrap()
+}
+
+#[test]
+fn agent_sends_cloudflare_service_token_with_heartbeat() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let root = std::env::temp_dir().join(format!("saml-access-{}-{port}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    let config_path = root.join("agent.json");
+    AgentConfig::new(Some(format!("http://127.0.0.1:{port}")))
+        .unwrap()
+        .save(&config_path)
+        .unwrap();
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut request = Vec::new();
+        let mut chunk = [0; 4096];
+        while !request.windows(4).any(|part| part == b"\r\n\r\n") {
+            let size = stream.read(&mut chunk).unwrap();
+            assert!(size > 0);
+            request.extend_from_slice(&chunk[..size]);
+        }
+        stream
+            .write_all(b"HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\n\r\n")
+            .unwrap();
+        String::from_utf8(request).unwrap().to_ascii_lowercase()
+    });
+    let output = Command::new(env!("CARGO_BIN_EXE_saml-agent"))
+        .args(["run", "--config", as_str(&config_path), "--once"])
+        .env(
+            "SAML_AGENT_TOKEN",
+            "agent-token-with-more-than-32-characters",
+        )
+        .env("SAML_CF_ACCESS_CLIENT_ID", "saml-client-id")
+        .env("SAML_CF_ACCESS_CLIENT_SECRET", "saml-client-secret")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let request = server.join().unwrap();
+    assert!(request.contains("authorization: bearer agent-token-with-more-than-32-characters"));
+    assert!(request.contains("cf-access-client-id: saml-client-id"));
+    assert!(request.contains("cf-access-client-secret: saml-client-secret"));
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
