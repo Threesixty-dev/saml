@@ -198,13 +198,15 @@ outside Git with owner-only permissions.
 
 The `Agent build` GitHub Actions workflow builds and tests the agent and launcher
 on macOS Apple Silicon, macOS Intel, Linux ARM64, Linux x86-64, and Windows
-x86-64. Each artifact contains both executables and names its source commit.
+x86-64. Linux builds run inside Debian Bookworm so they work on that runtime
+baseline; newer Ubuntu-hosted glibc is not allowed to raise the requirement.
+Each artifact contains both executables and names its source commit.
 The workflow has read-only repository access and never receives the signing
 key. Download artifacts from the same passing commit, then sign the desired
 platform binaries on the trusted signing machine. For example:
 
 ```sh
-python3 scripts/publish-agent-release.py --version 0.3.4 \
+python3 scripts/publish-agent-release.py --version 0.3.5 \
   --key /private/path/update-signing-key.pem --output updates \
   --target macos/aarch64=/path/to/macos-aarch64/saml-agent \
   --target linux/aarch64=/path/to/linux-aarch64/saml-agent
@@ -238,7 +240,7 @@ hub URL, and any Cloudflare Access service token in the environment:
 
 ```sh
 scripts/test-linux-update.sh /path/to/old/saml-agent \
-  /path/to/old/saml-launcher 0.3.4 https://saml.coolify.threesixty.dev
+  /path/to/old/saml-launcher 0.3.5 https://saml.coolify.threesixty.dev
 ```
 
 The script starts an isolated Linux container, waits for the signed update,
