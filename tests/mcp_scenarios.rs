@@ -287,7 +287,7 @@ fn mcp_02_modern_discovery_and_request_metadata() {
 
     let listed = client.request("tools/list", json!({"_meta": meta}));
     assert_eq!(listed["resultType"], "complete");
-    assert_eq!(listed["tools"].as_array().unwrap().len(), 8);
+    assert_eq!(listed["tools"].as_array().unwrap().len(), 11);
 
     let missing_meta = client.exchange("tools/list", json!({}));
     assert_eq!(missing_meta["error"]["code"], -32602);
@@ -319,6 +319,9 @@ fn mcp_03_tool_discovery_and_schema_rejection() {
             "get_diagnostics",
             "get_guide",
             "get_model_item",
+            "get_repository_git",
+            "get_repository_git_history",
+            "get_repository_info",
             "get_semantic_map",
             "get_workflow",
             "list_workspaces",
@@ -331,6 +334,9 @@ fn mcp_03_tool_discovery_and_schema_rejection() {
         ("get_model_item", vec!["workspace_id", "kind", "id"]),
         ("read_model_source", vec!["workspace_id", "uri"]),
         ("get_diagnostics", vec!["workspace_id"]),
+        ("get_repository_info", vec!["workspace_id"]),
+        ("get_repository_git", vec!["workspace_id"]),
+        ("get_repository_git_history", vec!["workspace_id"]),
     ] {
         let schema = &tools.iter().find(|tool| tool["name"] == name).unwrap()["inputSchema"];
         for field in required {

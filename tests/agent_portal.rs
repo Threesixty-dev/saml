@@ -116,7 +116,7 @@ fn running_agent_portal_tracks_repository_changes_without_hub() {
         .json()
         .unwrap();
     assert_eq!(status["service"], "saml-agent");
-    assert_eq!(status["telemetry_level"], "health_and_versions");
+    assert_eq!(status["telemetry_level"], "repository_details");
     assert_eq!(status["workspaces"], 1);
     let workspaces: Value = client
         .get(format!("{base}/api/workspaces"))
@@ -136,6 +136,43 @@ fn running_agent_portal_tracks_repository_changes_without_hub() {
         .json()
         .unwrap();
     assert_eq!(map["concepts"][0]["word"], "entity");
+    let repository: Value = client
+        .get(format!("{base}/api/repository?workspace={good_id}"))
+        .send()
+        .unwrap()
+        .json()
+        .unwrap();
+    assert_eq!(repository["name"], "good");
+    assert_eq!(repository["model"]["source_file_count"], 2);
+    assert_eq!(repository["model"]["materialization_count"], 2);
+    assert_eq!(repository["git"]["available"], false);
+    let git: Value = client
+        .get(format!("{base}/api/git?workspace={good_id}"))
+        .send()
+        .unwrap()
+        .json()
+        .unwrap();
+    assert_eq!(git["available"], false);
+    let history: Value = client
+        .get(format!(
+            "{base}/api/git/history?workspace={good_id}&limit=10"
+        ))
+        .send()
+        .unwrap()
+        .json()
+        .unwrap();
+    assert_eq!(history["available"], false);
+    assert_eq!(history["next_offset"], Value::Null);
+    assert_eq!(
+        client
+            .get(format!(
+                "{base}/api/git/history?workspace={good_id}&limit=101"
+            ))
+            .send()
+            .unwrap()
+            .status(),
+        400
+    );
 
     let workflow: Value = client
         .get(format!("{base}/api/workflow"))
@@ -145,6 +182,10 @@ fn running_agent_portal_tracks_repository_changes_without_hub() {
         .unwrap();
     assert_eq!(workflow["schema_version"], 1);
     assert_eq!(workflow["steps"][1]["action"], "find_item");
+    assert_eq!(
+        workflow["repository_steps"][1]["action"],
+        "inspect_repository"
+    );
     let search: Value = client
         .get(format!("{base}/api/query?workspace={good_id}&q=User"))
         .send()

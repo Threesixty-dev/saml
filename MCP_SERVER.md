@@ -50,6 +50,9 @@ per-request `_meta` protocol, client-capabilities, and client-info fields.
 | `get_diagnostics` | Check syntax and semantic findings | `workspace_id` |
 | `get_semantic_map` | Retrieve the complete semantic map | `workspace_id` |
 | `get_guide` | Read the SAML agent guide | None |
+| `get_repository_info` | Read repository identity, bounded model inventory and diagnostics, Git state, branches, and recent commits | `workspace_id` |
+| `get_repository_git` | Read a focused Git snapshot without analyzing the model | `workspace_id` |
+| `get_repository_git_history` | Page through older Git commits (1 to 100 per page) | `workspace_id`, optional `offset`, `limit` |
 
 Start with `get_workflow` and `list_workspaces`. For a question such as “what
 does User reference?”, call `search_model` with `User`, follow the returned
@@ -58,6 +61,17 @@ a relevant source URI with `read_model_source`. Check `get_diagnostics` before
 relying on the answer. Search is case-insensitive keyword lookup, so the
 calling agent extracts a model term from a broader question. It does not
 synthesize an answer itself.
+
+For repository questions, select a workspace ID and call
+`get_repository_info`. The response includes source and model roots, model
+counts and inventory, diagnostics, working-tree changes, branches, and recent
+commits. Model inventory, working-tree changes, and branch lists are bounded;
+their counts reflect the full repository, and `truncated` marks shortened lists.
+Use `get_repository_git` when only Git state is needed. For older commits,
+call `get_repository_git_history` with offset 0, then follow `next_offset`
+until it is null. `get_diagnostics` and
+`get_semantic_map` provide complete model evidence. A non-Git directory is a
+valid model workspace and returns `git.available=false`.
 
 Search returns at most 50 matches per call. When more remain, pass the returned
 `next_page` tool name and arguments back to the server. Its `cursor` is opaque

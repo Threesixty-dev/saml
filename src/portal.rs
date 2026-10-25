@@ -1,5 +1,6 @@
 use crate::diagnostics::diagnostic_report;
-use crate::distributed::AgentConfig;
+use crate::distributed::{AgentConfig, RegisteredRepository};
+use crate::repository_info::{self, LOCAL_LIMITS};
 use crate::semantic::analyze;
 use crate::semantic_query;
 use crate::workspace::collect_sources;
@@ -148,7 +149,7 @@ fn handle(mut stream: TcpStream, source: &PortalSource) -> io::Result<()> {
                 "service": source.service(),
                 "version": env!("CARGO_PKG_VERSION"),
                 "health": "serving",
-                "telemetry_level": if source.service() == "saml-agent" { "health_and_versions" } else { "local_only" },
+                "telemetry_level": if source.service() == "saml-agent" { "repository_details" } else { "local_only" },
                 "os": std::env::consts::OS,
                 "arch": std::env::consts::ARCH,
                 "workspaces": roots.len(),
@@ -194,6 +195,70 @@ fn handle(mut stream: TcpStream, source: &PortalSource) -> io::Result<()> {
                 })
                 .collect();
             let body = serde_json::to_vec(&workspaces)?;
+            respond(
+                &mut stream,
+                "200 OK",
+                "application/json; charset=utf-8",
+                &body,
+            )
+        }
+        "/api/repository" | "/api/git" => {
+            let Some(repo) = selected_repo(query, &roots) else {
+                return respond(
+                    &mut stream,
+                    "400 Bad Request",
+                    "text/plain",
+                    b"Invalid workspace",
+                );
+            };
+            let body = if route == "/api/git" {
+                serde_json::to_vec(&repository_info::inspect_git(&repo.root, LOCAL_LIMITS))?
+            } else {
+                let registered = RegisteredRepository {
+                    id: repo.id.clone(),
+                    root: repo.root.clone(),
+                    model_root: Some(repo.model_root.clone()),
+                };
+                serde_json::to_vec(&repository_info::inspect(&registered, LOCAL_LIMITS))?
+            };
+            respond(
+                &mut stream,
+                "200 OK",
+                "application/json; charset=utf-8",
+                &body,
+            )
+        }
+        "/api/git/history" => {
+            let Some(repo) = selected_repo(query, &roots) else {
+                return respond(
+                    &mut stream,
+                    "400 Bad Request",
+                    "text/plain",
+                    b"Invalid workspace",
+                );
+            };
+            let (Ok(offset), Ok(limit)) = (
+                numeric_parameter(query, "offset", 0),
+                numeric_parameter(query, "limit", 50),
+            ) else {
+                return respond(
+                    &mut stream,
+                    "400 Bad Request",
+                    "text/plain",
+                    b"Invalid page",
+                );
+            };
+            if !(1..=100).contains(&limit) {
+                return respond(
+                    &mut stream,
+                    "400 Bad Request",
+                    "text/plain",
+                    b"Invalid limit",
+                );
+            }
+            let body = serde_json::to_vec(&repository_info::inspect_git_history(
+                &repo.root, offset, limit,
+            ))?;
             respond(
                 &mut stream,
                 "200 OK",
@@ -349,6 +414,10 @@ fn selected_repo<'a>(query: &str, roots: &'a [PortalRepository]) -> Option<&'a P
         Some(id) => roots.iter().find(|repo| repo.id == id),
         None => roots.first(),
     }
+}
+
+fn numeric_parameter(query: &str, key: &str, default: usize) -> Result<usize, ()> {
+    parameter(query, key)?.map_or(Ok(default), |value| value.parse().map_err(|_| ()))
 }
 
 fn parameter(query: &str, key: &str) -> Result<Option<String>, ()> {
