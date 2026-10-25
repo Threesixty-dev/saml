@@ -1,7 +1,7 @@
 use crate::diagnostics::diagnostic_report;
 use crate::distributed::RegisteredRepository;
 use crate::semantic::analyze;
-use crate::workspace::{collect_sources_checked, uri_to_path};
+use crate::workspace::{collect_sources_checked, path_to_uri, uri_to_path};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -185,8 +185,10 @@ impl RepositoryInfo {
 
 fn relative_model_path(uri: &str, base: &Path) -> Option<String> {
     let path = uri_to_path(uri)?;
+    // URI round trips remove the Windows extended-path prefix from canonical roots.
+    let base = uri_to_path(&path_to_uri(base))?;
     Some(
-        path.strip_prefix(base)
+        path.strip_prefix(&base)
             .ok()?
             .to_string_lossy()
             .replace('\\', "/"),
