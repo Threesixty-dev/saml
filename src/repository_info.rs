@@ -1,9 +1,9 @@
 use crate::diagnostics::diagnostic_report;
 use crate::distributed::RegisteredRepository;
 use crate::semantic::analyze;
-use crate::workspace::collect_sources_checked;
+use crate::workspace::{collect_sources_checked, uri_to_path};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::process::Command;
 
@@ -40,6 +40,10 @@ pub struct ModelInfo {
     pub available: bool,
     pub source_file_count: usize,
     pub source_uris: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub source_paths: Vec<String>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub path_base: String,
     pub concept_count: usize,
     pub concepts: Vec<String>,
     pub materialization_count: usize,
@@ -57,6 +61,23 @@ pub struct ModelItem {
     pub id: String,
     pub kind: String,
     pub name: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ModelGraph {
+    pub available: bool,
+    pub node_count: usize,
+    pub link_count: usize,
+    pub nodes: Vec<ModelItem>,
+    pub links: Vec<GraphLink>,
+    pub truncated: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct GraphLink {
+    pub from: String,
+    pub to: String,
+    pub relation: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -120,11 +141,117 @@ pub fn inspect(repo: &RegisteredRepository, limits: Limits) -> RepositoryInfo {
     }
 }
 
+impl RepositoryInfo {
+    pub fn for_hub(mut self, repo: &RegisteredRepository) -> Self {
+        let model_root = repo.model_root.as_deref().unwrap_or(&repo.root);
+        let in_repository = model_root.starts_with(&repo.root);
+        let base = if in_repository {
+            &repo.root
+        } else {
+            model_root
+        };
+        self.model.path_base = if in_repository {
+            "repository"
+        } else {
+            "model_root"
+        }
+        .into();
+        self.model.source_paths = self
+            .model
+            .source_uris
+            .iter()
+            .filter_map(|uri| relative_model_path(uri, base))
+            .collect();
+        self.model.source_uris.clear();
+        for diagnostic in &mut self.model.diagnostics {
+            diagnostic.uri = relative_model_path(&diagnostic.uri, base)
+                .unwrap_or_else(|| "unknown source".into());
+        }
+        self.path = ".".into();
+        self.model_root = if in_repository {
+            let relative = model_root.strip_prefix(&repo.root).unwrap_or(Path::new(""));
+            if relative.as_os_str().is_empty() {
+                ".".into()
+            } else {
+                relative.to_string_lossy().into_owned()
+            }
+        } else {
+            "external".into()
+        };
+        self.git.worktree_root = None;
+        self
+    }
+}
+
+fn relative_model_path(uri: &str, base: &Path) -> Option<String> {
+    let path = uri_to_path(uri)?;
+    Some(
+        path.strip_prefix(base)
+            .ok()?
+            .to_string_lossy()
+            .replace('\\', "/"),
+    )
+}
+
+pub fn inspect_graph(repo: &RegisteredRepository) -> ModelGraph {
+    const NODE_LIMIT: usize = 500;
+    const LINK_LIMIT: usize = 2_000;
+    let root = repo.model_root.as_deref().unwrap_or(&repo.root);
+    let mut sources = HashMap::new();
+    if collect_sources_checked(root, &mut sources).is_err() {
+        return ModelGraph {
+            available: false,
+            node_count: 0,
+            link_count: 0,
+            nodes: Vec::new(),
+            links: Vec::new(),
+            truncated: false,
+        };
+    }
+    let map = analyze(&sources);
+    let node_count = map.materializations.len();
+    let link_count = map.links.len();
+    let mut nodes: Vec<_> = map
+        .materializations
+        .iter()
+        .map(|item| ModelItem {
+            id: item.id.clone(),
+            kind: item.kind.clone(),
+            name: item.name.clone(),
+        })
+        .collect();
+    nodes.sort_by(|a, b| a.id.cmp(&b.id));
+    nodes.truncate(NODE_LIMIT);
+    let included: HashSet<_> = nodes.iter().map(|item| item.id.as_str()).collect();
+    let mut links: Vec<_> = map
+        .links
+        .iter()
+        .filter(|link| included.contains(link.from.as_str()) && included.contains(link.to.as_str()))
+        .map(|link| GraphLink {
+            from: link.from.clone(),
+            to: link.to.clone(),
+            relation: link.relation.clone(),
+        })
+        .collect();
+    links.sort_by(|a, b| (&a.from, &a.to, &a.relation).cmp(&(&b.from, &b.to, &b.relation)));
+    links.truncate(LINK_LIMIT);
+    ModelGraph {
+        available: true,
+        node_count,
+        link_count,
+        truncated: nodes.len() < node_count || links.len() < link_count,
+        nodes,
+        links,
+    }
+}
+
 fn inspect_model(root: &Path, limits: Limits) -> ModelInfo {
     let empty = || ModelInfo {
         available: false,
         source_file_count: 0,
         source_uris: Vec::new(),
+        source_paths: Vec::new(),
+        path_base: String::new(),
         concept_count: 0,
         concepts: Vec::new(),
         materialization_count: 0,
@@ -164,6 +291,8 @@ fn inspect_model(root: &Path, limits: Limits) -> ModelInfo {
         available: true,
         source_file_count: source_uris.len(),
         source_uris: source_uris.into_iter().take(limits.entries).collect(),
+        source_paths: Vec::new(),
+        path_base: String::new(),
         concept_count: concepts.len(),
         concepts: concepts.into_iter().take(limits.entries).collect(),
         materialization_count: materializations.len(),
@@ -382,6 +511,75 @@ mod tests {
         assert_eq!(info.model.source_file_count, 1);
         assert_eq!(info.model.concepts, vec!["entity"]);
         assert!(!info.git.available);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn hub_paths_are_relative_and_external_models_are_labeled() {
+        let root = std::env::temp_dir().join(format!("saml-repo-paths-{}", Uuid::new_v4()));
+        let source = root.join("source");
+        let model = root.join("model");
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(&model).unwrap();
+        fs::write(model.join("spec.saml"), "concept Entity {}").unwrap();
+        let external = RegisteredRepository {
+            id: Uuid::new_v4().to_string(),
+            root: source.clone(),
+            model_root: Some(model.clone()),
+        };
+        let info = inspect(&external, HUB_LIMITS).for_hub(&external);
+        assert_eq!(info.path, ".");
+        assert_eq!(info.model_root, "external");
+        assert_eq!(info.model.path_base, "model_root");
+        assert_eq!(info.model.source_paths, ["spec.saml"]);
+        assert!(info.model.source_uris.is_empty());
+        assert!(!serde_json::to_string(&info)
+            .unwrap()
+            .contains(&root.to_string_lossy().to_string()));
+
+        fs::create_dir_all(source.join("models")).unwrap();
+        fs::write(source.join("models/local.saml"), "concept Local {}").unwrap();
+        let internal = RegisteredRepository {
+            id: Uuid::new_v4().to_string(),
+            root: source.clone(),
+            model_root: Some(source.join("models")),
+        };
+        let info = inspect(&internal, HUB_LIMITS).for_hub(&internal);
+        assert_eq!(info.model_root, "models");
+        assert_eq!(info.model.path_base, "repository");
+        assert_eq!(info.model.source_paths, ["models/local.saml"]);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn graph_report_contains_resolved_links() {
+        let root = std::env::temp_dir().join(format!("saml-repo-graph-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("model.spec"),
+            "concept Data {}\nconcept Action { target { type: Data } }",
+        )
+        .unwrap();
+        fs::write(
+            root.join("model.saml"),
+            "data Shared {}\naction Use { target: Shared }",
+        )
+        .unwrap();
+        let repo = RegisteredRepository {
+            id: Uuid::new_v4().to_string(),
+            root: root.clone(),
+            model_root: None,
+        };
+        let graph = inspect_graph(&repo);
+        assert!(graph.available);
+        assert_eq!(graph.node_count, 2);
+        assert_eq!(graph.link_count, 1);
+        assert_eq!(graph.links[0].relation, "property:target");
+        assert!(graph
+            .nodes
+            .iter()
+            .any(|node| node.id == graph.links[0].from));
+        assert!(graph.nodes.iter().any(|node| node.id == graph.links[0].to));
         fs::remove_dir_all(root).unwrap();
     }
 

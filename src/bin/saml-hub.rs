@@ -1,6 +1,7 @@
 use atomic_write_file::AtomicWriteFile;
 use saml_lsp::distributed::{
-    validate_heartbeat, validate_update_event, Heartbeat, HubState, UpdateEvent,
+    validate_graph_report, validate_heartbeat, validate_update_event, Heartbeat, HubState,
+    RepositoryGraphReport, UpdateEvent,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -14,9 +15,11 @@ use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 use uuid::Uuid;
 
 const MAX_BODY: u64 = 64 * 1024;
+const MAX_GRAPH_BODY: u64 = 512 * 1024;
 const DASHBOARD_HTML: &str = include_str!("../../hub/index.html");
 const DASHBOARD_CSS: &str = include_str!("../../hub/style.css");
 const DASHBOARD_JS: &str = include_str!("../../hub/app.js");
+const GRAPH_JS: &str = include_str!("../../hub/graph.js");
 
 #[derive(Default, Deserialize, Serialize)]
 struct Credentials {
@@ -113,8 +116,32 @@ fn handle(
     if request.method() == &Method::Get && route.starts_with("/updates/") {
         return serve_update_file(request, &route, update_dir);
     }
+    if request.method() == &Method::Get {
+        if let Some(ids) = route.strip_prefix("/api/v1/repository-graphs/") {
+            if admin_token.is_some_and(|token| !authorized(&request, token)) {
+                return respond_json(request, 401, &json!({"error":"unauthorized"}));
+            }
+            let mut parts = ids.split('/');
+            let (Some(agent_id), Some(repository_id), None) =
+                (parts.next(), parts.next(), parts.next())
+            else {
+                return respond_json(request, 404, &json!({"error":"not found"}));
+            };
+            if Uuid::parse_str(agent_id).is_err() || Uuid::parse_str(repository_id).is_err() {
+                return respond_json(request, 404, &json!({"error":"not found"}));
+            }
+            return match state
+                .repository_graphs
+                .get(agent_id)
+                .and_then(|items| items.get(repository_id))
+            {
+                Some(graph) => respond_json(request, 200, graph),
+                None => respond_json(request, 404, &json!({"error":"graph unavailable"})),
+            };
+        }
+    }
     match (request.method(), route.as_str()) {
-        (Method::Get, "/") => respond_bytes(
+        (Method::Get, "/" | "/repository") => respond_bytes(
             request,
             200,
             "text/html; charset=utf-8",
@@ -131,6 +158,12 @@ fn handle(
             200,
             "text/javascript; charset=utf-8",
             DASHBOARD_JS.as_bytes(),
+        ),
+        (Method::Get, "/graph.js") => respond_bytes(
+            request,
+            200,
+            "text/javascript; charset=utf-8",
+            GRAPH_JS.as_bytes(),
         ),
         (Method::Get, "/healthz") => respond_json(
             request,
@@ -184,6 +217,38 @@ fn handle(
             let mut next = state.clone();
             if let Err(error) = next.record(heartbeat).and_then(|()| next.save(state_path)) {
                 eprintln!("Cannot persist heartbeat: {error}");
+                return respond_json(request, 503, &json!({"error":"registry unavailable"}));
+            }
+            *state = next;
+            respond_json(request, 202, &json!({"accepted":true}))
+        }
+        (Method::Post, "/api/v1/repository-graphs") => {
+            let mut body = Vec::new();
+            request
+                .as_reader()
+                .take(MAX_GRAPH_BODY + 1)
+                .read_to_end(&mut body)?;
+            if body.len() as u64 > MAX_GRAPH_BODY {
+                return respond_json(request, 413, &json!({"error":"body too large"}));
+            }
+            let report: RepositoryGraphReport = match serde_json::from_slice(&body) {
+                Ok(value) if validate_graph_report(&value).is_ok() => value,
+                _ => return respond_json(request, 400, &json!({"error":"invalid graph"})),
+            };
+            match agent_authorized(&request, credentials_path, &report.agent_id) {
+                Ok(true) => {}
+                Ok(false) => return respond_json(request, 401, &json!({"error":"unauthorized"})),
+                Err(error) => {
+                    eprintln!("Cannot load agent credentials: {error}");
+                    return respond_json(request, 503, &json!({"error":"credentials unavailable"}));
+                }
+            }
+            let mut next = state.clone();
+            if next.record_graph(report).is_err() {
+                return respond_json(request, 400, &json!({"error":"graph rejected"}));
+            }
+            if let Err(error) = next.save(state_path) {
+                eprintln!("Cannot persist repository graph: {error}");
                 return respond_json(request, 503, &json!({"error":"registry unavailable"}));
             }
             *state = next;

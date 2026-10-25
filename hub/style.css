@@ -96,14 +96,10 @@ h2 { font: 400 clamp(27px, 2.7vw, 38px)/1.1 Georgia, "Times New Roman", serif; l
 .history span.degraded { background: var(--rust); }
 .agent-repos { padding: 24px; }
 .repo-title { font: 10px "Menlo", "Consolas", monospace; color: var(--muted); letter-spacing: .13em; padding-bottom: 13px; border-bottom: 1px solid var(--line); }
-.repo { border-bottom: 1px solid #dfe5dc; }
-.repo:last-child { border-bottom: 0; }
-.repo-summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 2px; cursor: pointer; list-style: none; }
-.repo-summary::-webkit-details-marker { display: none; }
-.repo-summary::after { content: '+'; color: var(--teal); font: 22px/1 Georgia, serif; order: 3; }
-.repo[open] .repo-summary::after { content: '−'; }
-.repo-summary:hover, .repo-summary:focus-visible { background: #edf2e9; outline: 2px solid transparent; }
-.repo-summary:focus-visible { outline-color: var(--teal); }
+.repo-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 6px; color: inherit; text-decoration: none; border-bottom: 1px solid #dfe5dc; }
+.repo-row:hover, .repo-row:focus-visible { background: #edf2e9; outline: 2px solid transparent; }
+.repo-row:focus-visible { outline-color: var(--teal); }
+.repo-arrow { color: var(--teal); font: 24px/1 Georgia, serif; }
 .repo-heading { display: grid; gap: 4px; min-width: 0; }
 .repo-name { font: 600 15px Georgia, serif; overflow-wrap: anywhere; }
 .repo-subtitle { color: var(--muted); font: 10px "Menlo", "Consolas", monospace; line-height: 1.5; overflow-wrap: anywhere; }
@@ -123,6 +119,60 @@ h2 { font: 400 clamp(27px, 2.7vw, 38px)/1.1 Georgia, "Times New Roman", serif; l
 .repo-count { color: var(--muted); font-size: 13px; margin-top: 15px; }
 .repo-more { width: 100%; margin-top: 14px; padding: 11px; border: 1px solid var(--line); background: #edf2e9; color: var(--teal); font: 10px "Menlo", "Consolas", monospace; letter-spacing: .1em; text-align: left; }
 .repo-more:hover, .repo-more:focus-visible { border-color: var(--teal); background: #dce9db; }
+.repository-page { animation: rise .5s both; }
+.detail-navigation { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.back-link { display: inline-block; margin: 32px 0 14px; color: var(--teal); font: 11px "Menlo", "Consolas", monospace; font-weight: 700; letter-spacing: .1em; text-decoration: none; }
+.back-link:hover, .back-link:focus-visible { text-decoration: underline; }
+.detail-navigation button { margin-top: 18px; padding: 8px 11px; background: transparent; border: 1px solid var(--line); color: var(--teal); font: 10px "Menlo", "Consolas", monospace; letter-spacing: .08em; }
+.detail-navigation button:hover, .detail-navigation button:focus-visible { border-color: var(--teal); background: #dce9db; }
+.detail-hero { display: flex; justify-content: space-between; align-items: end; gap: 28px; padding: 28px 0 34px; border-bottom: 1px solid var(--line); }
+.detail-hero h1 { margin: 12px 0 10px; font-size: clamp(48px, 6vw, 86px); overflow-wrap: anywhere; }
+.detail-hero p { margin: 0; color: var(--muted); line-height: 1.5; }
+.detail-identity { display: grid; gap: 12px; justify-items: end; min-width: 180px; color: var(--muted); font: 10px "Menlo", "Consolas", monospace; letter-spacing: .08em; white-space: nowrap; }
+.detail-facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); margin: 28px 0 48px; }
+.detail-fact { background: var(--cream); padding: 19px 22px; display: grid; gap: 9px; }
+.detail-fact strong { font: 400 38px/1 Georgia, serif; }
+.detail-fact span { color: var(--muted); font: 10px "Menlo", "Consolas", monospace; letter-spacing: .1em; }
+.graph-panel { border: 1px solid var(--line); background: var(--cream); box-shadow: 8px 8px 0 #b8c8b8a8; }
+.graph-heading { display: flex; justify-content: space-between; align-items: end; gap: 25px; padding: 26px 28px 23px; border-bottom: 1px solid var(--line); }
+.graph-heading h2 { margin: 0 0 6px; }
+.graph-heading p { margin: 0; color: var(--muted); font-size: 13px; }
+.graph-tools { display: flex; align-items: center; gap: 5px; }
+.graph-tools label { margin-right: 8px; color: var(--muted); font: 10px "Menlo", "Consolas", monospace; letter-spacing: .1em; white-space: nowrap; }
+.graph-tools input { width: clamp(150px, 17vw, 250px); height: 38px; border: 1px solid var(--line); background: white; padding: 0 11px; color: var(--ink); outline: none; font-size: 12px; }
+.graph-tools input:focus { border-color: var(--teal); }
+.graph-tools button { height: 38px; min-width: 36px; padding: 0 8px; border: 1px solid var(--line); background: #edf2e9; color: var(--teal); font: 12px "Menlo", "Consolas", monospace; }
+.graph-tools button:hover, .graph-tools button:focus-visible { border-color: var(--teal); background: var(--mint); }
+.graph-layout { display: grid; grid-template-columns: minmax(0, 1fr) 250px; min-height: 470px; }
+.graph-stage { position: relative; min-width: 0; background: radial-gradient(circle at 50% 40%, #edf4e9 0, #f7f8f1 60%); overflow: hidden; }
+#model-graph { width: 100%; height: 470px; display: block; touch-action: none; cursor: grab; }
+#model-graph:active { cursor: grabbing; }
+.graph-empty { position: absolute; inset: 44% 20px auto; text-align: center; color: var(--muted); font-size: 14px; pointer-events: none; }
+.graph-group-box { fill: #ffffff8a; stroke: #cadbd0; stroke-width: 1; }
+.graph-group-label { fill: var(--teal); font: 700 11px "Menlo", "Consolas", monospace; letter-spacing: 1px; }
+.graph-edge { stroke: #a4bdb1; stroke-width: 1.3; opacity: .55; pointer-events: none; }
+.graph-edge.dimmed, #model-graph.searching .graph-edge:not(.selected) { opacity: .08; }
+.graph-edge.selected { stroke: var(--rust); stroke-width: 2.6; opacity: .95; }
+.graph-node { stroke: var(--cream); stroke-width: 2; cursor: pointer; transition: opacity .15s, r .15s; }
+.graph-node:hover, .graph-node:focus-visible, .graph-node.selected { r: 12; stroke: var(--ink); stroke-width: 2; outline: none; }
+.graph-node.connected { r: 10; }
+.graph-node.dimmed { opacity: .2; }
+.graph-node.match { r: 12; stroke: var(--gold); stroke-width: 3; }
+.graph-node-label { fill: var(--ink); font: 11px "Menlo", "Consolas", monospace; pointer-events: none; }
+.graph-inspector { border-left: 1px solid var(--line); padding: 24px 20px; overflow: auto; max-height: 470px; }
+.graph-inspector h3 { font: 400 27px Georgia, serif; overflow-wrap: anywhere; margin: 12px 0; }
+.graph-inspector p { color: var(--muted); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.inspector-kind { font-family: "Menlo", "Consolas", monospace; }
+.inspector-count { display: block; margin: 21px 0 9px; color: var(--teal); font: 10px "Menlo", "Consolas", monospace; letter-spacing: .08em; }
+.inspector-links { display: grid; gap: 1px; }
+.inspector-link { border: 0; border-bottom: 1px solid var(--line); background: none; padding: 9px 0; text-align: left; color: var(--ink); font: 11px/1.45 "Menlo", "Consolas", monospace; overflow-wrap: anywhere; }
+.inspector-link:hover, .inspector-link:focus-visible { color: var(--teal); }
+.inspector-overflow { margin: 12px 0; }
+.graph-caption { border-top: 1px solid var(--line); margin: 0; padding: 12px 28px; color: var(--muted); font: 11px/1.5 "Menlo", "Consolas", monospace; }
+.detail-sections { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 30px; margin: 56px 0 0; }
+.detail-sections .repo-detail-section { background: var(--cream); border-top: 3px solid var(--ink); padding: 20px; }
+.detail-sections .repo-detail-list { max-height: 280px; }
+.source-note { color: var(--muted); font-size: 11px; margin: 0 0 9px; }
 .agent-updates { grid-column: 1 / -1; border-top: 1px solid var(--line); padding: 18px 24px 20px; background: #f2f4ea; }
 .update-heading { color: var(--muted); font: 10px "Menlo", "Consolas", monospace; letter-spacing: .13em; margin-bottom: 11px; }
 .update-empty { color: var(--muted); font-size: 13px; margin: 0; }
@@ -147,6 +197,9 @@ footer i { color: var(--rust); font-style: normal; }
   .update-event { grid-template-columns: 125px 1fr auto; }
   .update-detail { grid-column: 2 / -1; grid-row: 2; }
   .repo-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .detail-facts { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .graph-heading { align-items: start; flex-direction: column; }
+  .graph-layout { grid-template-columns: minmax(0, 1fr) 210px; }
 }
 @media (max-width: 680px) {
   .topbar { height: 64px; }
@@ -160,6 +213,12 @@ footer i { color: var(--rust); font-style: normal; }
   .agent { grid-template-columns: 1fr; }
   .agent-main { border-right: 0; border-bottom: 1px solid var(--line); }
   .repo-detail-grid { grid-template-columns: 1fr; }
+  .detail-hero { align-items: start; flex-direction: column; }
+  .detail-identity { justify-items: start; }
+  .detail-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .graph-layout { grid-template-columns: 1fr; }
+  .graph-inspector { max-height: 250px; border-left: 0; border-top: 1px solid var(--line); }
+  .detail-sections { grid-template-columns: 1fr; gap: 20px; }
   .update-event { grid-template-columns: 1fr auto; gap: 3px 10px; }
   .update-versions { grid-column: 1 / -1; }
   .update-detail { grid-column: 1 / -1; grid-row: auto; }
@@ -177,5 +236,13 @@ footer i { color: var(--rust); font-style: normal; }
   .input-row { flex-direction: column; gap: 9px; }
   .input-row input { min-height: 49px; border-right: 1px solid #829d92; }
   .input-row button { min-height: 47px; }
+  .graph-heading { padding: 21px 17px; }
+  .graph-tools { flex-wrap: wrap; width: 100%; }
+  .graph-tools label { width: 100%; }
+  .graph-tools input { flex: 1; min-width: 135px; }
+  #model-graph { height: 350px; }
+  .graph-layout { min-height: 350px; }
+  .detail-fact { padding: 15px; }
+  .detail-fact strong { font-size: 31px; }
 }
 @media (prefers-reduced-motion: reduce) { .hero-copy, .access, .dashboard, .agent { animation: none; } }

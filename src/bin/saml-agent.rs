@@ -1,4 +1,4 @@
-use saml_lsp::distributed::{validate_hub_url, AgentConfig};
+use saml_lsp::distributed::{validate_graph_report, validate_hub_url, AgentConfig};
 use saml_lsp::portal::{serve, PortalSource};
 use std::env;
 use std::io;
@@ -192,6 +192,27 @@ fn send_once(
             response.status()
         ))
         .into());
+    }
+    for report in config.graph_reports() {
+        if let Err(error) = validate_graph_report(&report) {
+            eprintln!("Repository graph skipped: {error}");
+            continue;
+        }
+        let url = format!("{}/api/v1/repository-graphs", hub_url.trim_end_matches('/'));
+        let mut request = client.post(url).bearer_auth(token).json(&report);
+        if let Some(access) = cloudflare_access {
+            request = request
+                .header("CF-Access-Client-Id", &access.client_id)
+                .header("CF-Access-Client-Secret", &access.client_secret);
+        }
+        match request.send() {
+            Ok(response) if response.status().is_success() => {}
+            Ok(response) => eprintln!(
+                "Repository graph upload rejected: HTTP {}",
+                response.status()
+            ),
+            Err(error) => eprintln!("Repository graph upload failed: {error}"),
+        }
     }
     Ok(())
 }
