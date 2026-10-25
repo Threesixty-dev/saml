@@ -13,7 +13,8 @@ The [distributed runtime](DISTRIBUTED_RUNTIME.md) includes a portable
 repositories. It can send health/version heartbeats to a self-hosted
 `saml-hub` with a fleet dashboard; the local service also runs without a hub.
 The runtime guide includes setup, credential provisioning, and the hub API.
-Signed automatic updates remain planned.
+The separate `saml-launcher` can install signed agent releases automatically.
+See the runtime guide for publishing, trust, and rollout details.
 
 For persistent multi-repository use:
 

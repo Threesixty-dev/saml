@@ -2,6 +2,7 @@ FROM rust:1.99-bookworm AS builder
 
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
+COPY updates/root.pub ./updates/root.pub
 COPY LLM_GUIDE.md ./
 COPY src ./src
 COPY hub ./hub
@@ -18,11 +19,13 @@ RUN apt-get update \
     && install -d -o saml -g saml -m 0700 /data
 
 COPY --from=builder /src/target/release/saml-hub /usr/local/bin/saml-hub
+COPY --chown=saml:saml updates /opt/saml/updates
 
 ENV SAML_HUB_BIND=0.0.0.0:8765 \
     SAML_HUB_ALLOW_NON_LOOPBACK=1 \
     SAML_HUB_STATE=/data/state.json \
-    SAML_HUB_CREDENTIALS=/data/credentials.json
+    SAML_HUB_CREDENTIALS=/data/credentials.json \
+    SAML_HUB_UPDATE_DIR=/opt/saml/updates
 
 USER saml
 EXPOSE 8765

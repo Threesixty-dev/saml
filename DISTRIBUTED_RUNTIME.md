@@ -2,8 +2,8 @@
 
 Status: `saml-agent` manages multiple repositories, serves the local portal
 and LLM API, and sends health/version heartbeats to the self-hosted
-`saml-hub`. The hub serves a fleet dashboard. Signed automatic updates remain
-planned.
+`saml-hub`. The hub serves a fleet dashboard and signed agent releases.
+`saml-launcher` verifies and installs agent updates.
 
 Initial decisions: the hub is self-hosted; agents install approved updates
 automatically; the first telemetry scope is health and version information.
@@ -52,7 +52,7 @@ It has a schema version so agent and hub releases can evolve independently.
 The hub records last-seen state and the latest 100 samples per agent in an
 atomically replaced JSON file, exposed by an authenticated API. A central
 dashboard shows recent presence, versions, repository health, and history.
-Update outcomes and OpenTelemetry export remain future work.
+Update outcomes in hub telemetry and OpenTelemetry export remain future work.
 
 The heartbeat reports an opaque ID and health state for each registered
 repository without sending its path or model data. An unhealthy repository
@@ -181,37 +181,51 @@ history per agent. The agent sends to `POST /api/v1/heartbeat` using its own
 provisioned credential in either mode. The local analyzer, LLM commands, and
 portal continue to work if the hub is unreachable.
 
-## Updates
+## Signed agent updates
 
-The hub can serve a read-only update repository when `SAML_HUB_UPDATE_DIR`
-points at a directory with `metadata/` and `targets/` children. They are
-available at `/updates/metadata/` and `/updates/targets/`. The operator
-publishes signed TUF metadata and artifacts into that directory; the hub is
-only a transport and does not sign or authorize executable code. Path traversal
-and symlink escapes are rejected. No agent update client or installer is
-enabled yet.
+The hub serves a read-only update repository from `SAML_HUB_UPDATE_DIR`, with
+`metadata/release.json`, `metadata/release.sig`, and versioned binaries under
+`targets/saml-agent/<os>/<arch>/<version>`. The Coolify image copies the
+repository's `updates/` directory into `/opt/saml/updates`. Cloudflare Access
+protects the transport; the launcher independently authenticates the exact
+manifest bytes using the pinned Ed25519 public key in `updates/root.pub`.
 
-The signed repository will contain releases by channel and platform. Agents
-will check and install eligible releases automatically. Update metadata and
-artifacts must be authenticated independently of the HTTPS connection; a
-compromised hub should not be able to distribute arbitrary executable code.
-The installer embeds a trusted update root. The client verifies release
-signatures, artifact hash, platform, version, and metadata freshness before
-staging an update. Installation needs a separate launcher/updater process so
-the running executable can be replaced on every
-supported platform. After restart, the launcher checks health and can restore
-the previous version on failure. Rollouts should support channels and staged
-deployment, with a way to hold or roll back a release.
+The publisher is `scripts/publish-agent-release.py`. It accepts one or more
+`--target OS/ARCH=BINARY` arguments, a stable `--version`, and an Ed25519
+private key. Keep the signing key outside Git with owner-only permissions.
+For a macOS Apple Silicon release:
 
-Release metadata will follow The Update Framework for signature, freshness,
-and rollback checks. Transport and installation remain separate: the hub
-serves repository files, while a local launcher will perform platform-specific
-replacement after verification.
+```sh
+cargo build --locked --release --bin saml-agent --bin saml-launcher
+python3 scripts/publish-agent-release.py --version 0.3.2 \
+  --key /private/path/update-signing-key.pem --output updates \
+  --target macos/aarch64=target/release/saml-agent
+```
 
-The release publisher signs artifacts and metadata before the hub receives
-them. Automatic installation never treats an unsigned hub response as
-authorization to execute code. A local rollback to the last known good slot is
-separate from accepting an old release as a new update.
+Publish the resulting `updates/` files and deploy the hub. The launcher reads
+the hub URL from the local agent config and Cloudflare service token from its
+environment. Run it as the OS-supervised process, with paths to the initial
+agent binary and a private state directory:
+
+```sh
+saml-launcher --config ./agent.json --agent ./saml-agent \
+  --state-dir ./agent-state
+```
+
+The launcher checks every 60 seconds by default (`SAML_UPDATE_POLL_SECS`,
+minimum 5). It verifies the signature, metadata expiry, increasing semantic
+version, platform-specific target path, size, and SHA-256 before staging the
+binary. It stops the old child, starts the new one, and confirms `/api/status`
+reports the expected version. If the new process fails startup, it restores
+the previous binary. State and previous binaries remain local. The launcher
+itself is a stable bootstrap executable; deploying it initially is a manual
+step. Platform binaries must be published for each target platform.
+
+This is a single-key signed manifest, not a complete TUF repository. Key
+rotation, delegated roles, staged rollouts, and update outcomes in the hub
+remain future work. Keep the private key backed up securely; losing it means
+existing launchers cannot trust later releases without a manual trust-root
+replacement. The hub only transports release bytes and never holds the key.
 
 ## LLM and portal interface
 
@@ -232,9 +246,9 @@ The central hub observes agents; it does not need access to the local portal.
 3. Done: have the agent host the existing portal and LLM API from its
    persistent repository registry. Packaging it as an OS service remains
    planned.
-4. In progress: the hub serves update metadata and targets. Add signed release
-   publication, client-side TUF verification, staging, and a platform-specific
-   launcher with rollback.
+4. Done for the initial channel: the hub serves signed release metadata and
+   targets; the launcher verifies and stages updates with startup rollback.
+   Full TUF metadata, key rotation, and staged deployment remain planned.
 5. Done: add a central dashboard for health and versions. Deployment channels
    remain planned. Expand telemetry only after its data policy is specified.
 

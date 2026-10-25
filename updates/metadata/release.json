@@ -1,0 +1,1 @@
+{"expires_unix_secs":1793559874,"issued_unix_secs":1792955074,"schema_version":1,"targets":[{"path":"saml-agent/macos/aarch64/0.3.2","platform":"macos/aarch64","sha256":"79ec70df8d94b2485c280c566b951b806c676b36606df6bbbf0c0b40166d8fdd","size":6418672}],"version":"0.3.2"}
