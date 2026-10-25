@@ -8,10 +8,12 @@ An initial [language server](LANGUAGE_SERVER.md) supports editing the evolving `
 
 The [semantic map](SEMANTIC_MODEL.md) has a Rust analyzer, a JSON CLI, and a local 3D browser viewer.
 
-The proposed [distributed runtime](DISTRIBUTED_RUNTIME.md) describes a
-cross-platform agent, a self-hosted observability hub, and over-the-air updates.
-The local viewer now provides a `/api/status` endpoint with its version and
-service health; hub connectivity and automatic updates are planned work.
+The [distributed runtime](DISTRIBUTED_RUNTIME.md) now includes a portable
+`saml-agent` that monitors multiple repositories and sends health/version
+heartbeats to a self-hosted `saml-hub`. The runtime guide includes setup,
+credential provisioning, and the hub API. Signed automatic updates remain
+planned. The local viewer provides a `/api/status` endpoint with its version
+and service health.
 It can serve multiple repositories at once:
 
 ```sh
