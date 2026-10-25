@@ -100,6 +100,15 @@ h2 { font: 400 clamp(27px, 2.7vw, 38px)/1.1 Georgia, "Times New Roman", serif; l
 .repo:last-child { border-bottom: 0; }
 .repo-id { font: 11px "Menlo", "Consolas", monospace; overflow-wrap: anywhere; }
 .repo-count { color: var(--muted); font-size: 13px; margin-top: 15px; }
+.agent-updates { grid-column: 1 / -1; border-top: 1px solid var(--line); padding: 18px 24px 20px; background: #f2f4ea; }
+.update-heading { color: var(--muted); font: 10px "Menlo", "Consolas", monospace; letter-spacing: .13em; margin-bottom: 11px; }
+.update-empty { color: var(--muted); font-size: 13px; margin: 0; }
+.update-event { display: grid; grid-template-columns: 125px minmax(150px, .7fr) minmax(180px, 1.2fr) auto; gap: 14px; align-items: baseline; padding: 8px 0; border-top: 1px solid #dfe5dc; font: 11px "Menlo", "Consolas", monospace; line-height: 1.5; }
+.update-result { color: var(--rust); font-size: 10px; letter-spacing: .08em; }
+.update-event.success .update-result { color: var(--teal); }
+.update-versions { color: var(--ink); }
+.update-detail, .update-time { color: var(--muted); }
+.update-time { text-align: right; white-space: nowrap; }
 .empty { background: var(--cream); border: 1px dashed var(--line); padding: 50px 30px; color: var(--muted); }
 .empty code { color: var(--ink); }
 .message { color: var(--rust); min-height: 22px; font-size: 14px; margin: 24px 0 0; }
@@ -112,6 +121,8 @@ footer i { color: var(--rust); font-style: normal; }
   .hero-art { transform: scale(.82); transform-origin: center right; }
   .metrics { grid-template-columns: repeat(2, 1fr); }
   .access { grid-template-columns: 1fr; gap: 25px; }
+  .update-event { grid-template-columns: 125px 1fr auto; }
+  .update-detail { grid-column: 2 / -1; grid-row: 2; }
 }
 @media (max-width: 680px) {
   .topbar { height: 64px; }
@@ -124,6 +135,10 @@ footer i { color: var(--rust); font-style: normal; }
   .dashboard-actions { justify-content: flex-start; }
   .agent { grid-template-columns: 1fr; }
   .agent-main { border-right: 0; border-bottom: 1px solid var(--line); }
+  .update-event { grid-template-columns: 1fr auto; gap: 3px 10px; }
+  .update-versions { grid-column: 1 / -1; }
+  .update-detail { grid-column: 1 / -1; grid-row: auto; }
+  .update-time { grid-column: 2; grid-row: 1; }
   footer { flex-direction: column; }
 }
 @media (max-width: 440px) {

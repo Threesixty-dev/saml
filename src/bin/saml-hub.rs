@@ -1,5 +1,7 @@
 use atomic_write_file::AtomicWriteFile;
-use saml_lsp::distributed::{validate_heartbeat, Heartbeat, HubState};
+use saml_lsp::distributed::{
+    validate_heartbeat, validate_update_event, Heartbeat, HubState, UpdateEvent,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
@@ -154,6 +156,7 @@ fn handle(
                 &json!({
                     "observed_at_unix_secs": now,
                     "agents": &state.agents,
+                    "update_events": &state.update_events,
                 }),
             )
         }
@@ -170,22 +173,49 @@ fn handle(
                 Ok(value) if validate_heartbeat(&value).is_ok() => value,
                 _ => return respond_json(request, 400, &json!({"error":"invalid heartbeat"})),
             };
-            let credentials = match load_credentials(credentials_path) {
-                Ok(value) => value,
+            match agent_authorized(&request, credentials_path, &heartbeat.agent_id) {
+                Ok(true) => {}
+                Ok(false) => return respond_json(request, 401, &json!({"error":"unauthorized"})),
                 Err(error) => {
                     eprintln!("Cannot load agent credentials: {error}");
                     return respond_json(request, 503, &json!({"error":"credentials unavailable"}));
                 }
-            };
-            let Some(token) = credentials.agents.get(&heartbeat.agent_id) else {
-                return respond_json(request, 401, &json!({"error":"unauthorized"}));
-            };
-            if !authorized(&request, token) {
-                return respond_json(request, 401, &json!({"error":"unauthorized"}));
             }
             let mut next = state.clone();
             if let Err(error) = next.record(heartbeat).and_then(|()| next.save(state_path)) {
                 eprintln!("Cannot persist heartbeat: {error}");
+                return respond_json(request, 503, &json!({"error":"registry unavailable"}));
+            }
+            *state = next;
+            respond_json(request, 202, &json!({"accepted":true}))
+        }
+        (Method::Post, "/api/v1/update-events") => {
+            let mut body = Vec::new();
+            request
+                .as_reader()
+                .take(MAX_BODY + 1)
+                .read_to_end(&mut body)?;
+            if body.len() as u64 > MAX_BODY {
+                return respond_json(request, 413, &json!({"error":"body too large"}));
+            }
+            let event: UpdateEvent = match serde_json::from_slice(&body) {
+                Ok(value) if validate_update_event(&value).is_ok() => value,
+                _ => return respond_json(request, 400, &json!({"error":"invalid update event"})),
+            };
+            match agent_authorized(&request, credentials_path, &event.agent_id) {
+                Ok(true) => {}
+                Ok(false) => return respond_json(request, 401, &json!({"error":"unauthorized"})),
+                Err(error) => {
+                    eprintln!("Cannot load agent credentials: {error}");
+                    return respond_json(request, 503, &json!({"error":"credentials unavailable"}));
+                }
+            }
+            let mut next = state.clone();
+            if let Err(error) = next
+                .record_update(event)
+                .and_then(|()| next.save(state_path))
+            {
+                eprintln!("Cannot persist update event: {error}");
                 return respond_json(request, 503, &json!({"error":"registry unavailable"}));
             }
             *state = next;
@@ -285,6 +315,14 @@ fn authorized(request: &Request, token: &str) -> bool {
     request.headers().iter().any(|header| {
         header.field.equiv("Authorization") && header.value.as_str() == format!("Bearer {token}")
     })
+}
+
+fn agent_authorized(request: &Request, path: &Path, agent_id: &str) -> io::Result<bool> {
+    let credentials = load_credentials(path)?;
+    Ok(credentials
+        .agents
+        .get(agent_id)
+        .is_some_and(|token| authorized(request, token)))
 }
 
 fn respond_json<T: serde::Serialize>(request: Request, code: u16, value: &T) -> io::Result<()> {

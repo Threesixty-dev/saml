@@ -1,4 +1,4 @@
-use saml_lsp::distributed::AgentConfig;
+use saml_lsp::distributed::{AgentConfig, UpdateEvent, PROTOCOL_VERSION};
 use serde_json::Value;
 use std::fs;
 use std::io::{Read, Write};
@@ -365,6 +365,57 @@ fn hub_receives_only_version_and_isolated_repository_health() {
     assert_eq!(heartbeat["version"], env!("CARGO_PKG_VERSION"));
     assert_eq!(heartbeat["repositories"][0]["health"], "healthy");
     assert_eq!(heartbeat["repositories"][1]["health"], "degraded");
+    let failed = UpdateEvent {
+        schema_version: PROTOCOL_VERSION,
+        agent_id: agent_id.into(),
+        event_id: uuid::Uuid::new_v4().to_string(),
+        at_unix_secs: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs(),
+        from_version: "0.3.3".into(),
+        target_version: "0.3.5".into(),
+        outcome: "rolled_back".into(),
+        reason: Some("health_timeout".into()),
+    };
+    let rejected = client
+        .post(format!("{base}/api/v1/update-events"))
+        .bearer_auth("incorrect-agent-credential")
+        .json(&failed)
+        .send()
+        .unwrap();
+    assert_eq!(rejected.status(), 401);
+    for _ in 0..2 {
+        let accepted = client
+            .post(format!("{base}/api/v1/update-events"))
+            .bearer_auth(token)
+            .json(&failed)
+            .send()
+            .unwrap();
+        assert_eq!(accepted.status(), 202);
+    }
+    let mut succeeded = failed.clone();
+    succeeded.event_id = uuid::Uuid::new_v4().to_string();
+    succeeded.outcome = "installed".into();
+    succeeded.reason = None;
+    let accepted = client
+        .post(format!("{base}/api/v1/update-events"))
+        .bearer_auth(token)
+        .json(&succeeded)
+        .send()
+        .unwrap();
+    assert_eq!(accepted.status(), 202);
+    let registry: Value = client
+        .get(format!("{base}/api/v1/agents"))
+        .bearer_auth(admin_token)
+        .send()
+        .unwrap()
+        .json()
+        .unwrap();
+    let updates = &registry["update_events"][agent_id];
+    assert_eq!(updates.as_array().unwrap().len(), 2);
+    assert_eq!(updates[0]["outcome"], "rolled_back");
+    assert_eq!(updates[1]["outcome"], "installed");
     let saved = fs::read_to_string(&state_path).unwrap();
     assert!(!saved.contains(as_str(&root)));
     assert!(!saved.contains(token));
