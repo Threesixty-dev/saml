@@ -1,3 +1,4 @@
 target/
 *.vsix
 /.local-models/
+__pycache__/

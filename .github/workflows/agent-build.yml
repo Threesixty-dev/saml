@@ -1,0 +1,93 @@
+name: Agent build
+
+on:
+  push:
+    branches:
+      - main
+      - codex/**
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos/aarch64
+            artifact: macos-aarch64
+            runner: macos-15
+            suffix: ""
+          - platform: macos/x86_64
+            artifact: macos-x86_64
+            runner: macos-15-intel
+            suffix: ""
+          - platform: linux/aarch64
+            artifact: linux-aarch64
+            runner: ubuntu-24.04-arm
+            suffix: ""
+          - platform: linux/x86_64
+            artifact: linux-x86_64
+            runner: ubuntu-24.04
+            suffix: ""
+          - platform: windows/x86_64
+            artifact: windows-x86_64
+            runner: windows-2025
+            suffix: .exe
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install Rust 1.99
+        if: runner.os != 'Linux'
+        shell: bash
+        run: |
+          rustup toolchain install 1.99.0 --profile minimal
+          rustup default 1.99.0
+      - name: Test
+        if: runner.os != 'Linux'
+        shell: bash
+        run: cargo test --locked
+      - name: Build release binaries
+        if: runner.os != 'Linux'
+        shell: bash
+        run: cargo build --locked --release --bin saml-agent --bin saml-launcher
+      - name: Package binaries
+        if: runner.os != 'Linux'
+        shell: bash
+        env:
+          SUFFIX: ${{ matrix.suffix }}
+        run: |
+          mkdir -p dist
+          cp "target/release/saml-agent${SUFFIX}" "dist/saml-agent${SUFFIX}"
+          cp "target/release/saml-launcher${SUFFIX}" "dist/saml-launcher${SUFFIX}"
+      - name: Test and build Linux on Debian Bookworm
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/saml-build" dist
+          docker run --rm --user "$(id -u):$(id -g)" \
+            -e HOME=/out -e CARGO_HOME=/out/cargo \
+            -e CARGO_TARGET_DIR=/out/target \
+            -v "$PWD:/src:ro" -v "$RUNNER_TEMP/saml-build:/out" \
+            -v "$PWD/dist:/dist" -w /src \
+            rust:1.99-bookworm sh -c '
+              cargo test --locked &&
+              cargo build --locked --release --bin saml-agent --bin saml-launcher &&
+              cp /out/target/release/saml-agent /dist/saml-agent &&
+              cp /out/target/release/saml-launcher /dist/saml-launcher
+            '
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: saml-${{ matrix.artifact }}-${{ github.sha }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14

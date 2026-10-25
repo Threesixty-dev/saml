@@ -148,6 +148,7 @@ fn handle(mut stream: TcpStream, source: &PortalSource) -> io::Result<()> {
                 "service": source.service(),
                 "version": env!("CARGO_PKG_VERSION"),
                 "health": "serving",
+                "telemetry_level": if source.service() == "saml-agent" { "health_and_versions" } else { "local_only" },
                 "os": std::env::consts::OS,
                 "arch": std::env::consts::ARCH,
                 "workspaces": roots.len(),

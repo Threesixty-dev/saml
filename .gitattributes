@@ -1,0 +1,2 @@
+# Signed metadata must keep the exact bytes produced by the publisher.
+updates/** -text
