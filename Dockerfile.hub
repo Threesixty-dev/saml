@@ -1,0 +1,31 @@
+FROM rust:1.99-bookworm AS builder
+
+WORKDIR /src
+COPY Cargo.toml Cargo.lock ./
+COPY LLM_GUIDE.md ./
+COPY src ./src
+COPY hub ./hub
+COPY viewer ./viewer
+RUN cargo build --locked --release --bin saml-hub
+
+FROM debian:bookworm-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --system --gid 10001 saml \
+    && useradd --system --uid 10001 --gid saml --home-dir /data saml \
+    && install -d -o saml -g saml -m 0700 /data
+
+COPY --from=builder /src/target/release/saml-hub /usr/local/bin/saml-hub
+
+ENV SAML_HUB_BIND=0.0.0.0:8765 \
+    SAML_HUB_ALLOW_NON_LOOPBACK=1 \
+    SAML_HUB_STATE=/data/state.json \
+    SAML_HUB_CREDENTIALS=/data/credentials.json
+
+USER saml
+EXPOSE 8765
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s \
+    CMD curl --fail --silent http://127.0.0.1:8765/healthz > /dev/null || exit 1
+CMD ["saml-hub"]

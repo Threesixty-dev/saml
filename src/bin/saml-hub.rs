@@ -55,9 +55,9 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let bind: SocketAddr = env::var("SAML_HUB_BIND")
         .unwrap_or_else(|_| "127.0.0.1:8765".into())
         .parse()?;
-    if !bind.ip().is_loopback() {
+    if !bind.ip().is_loopback() && env::var("SAML_HUB_ALLOW_NON_LOOPBACK").as_deref() != Ok("1") {
         return Err(
-            "SAML hub binds only to loopback; expose it through an HTTPS reverse proxy".into(),
+            "SAML hub binds only to loopback unless SAML_HUB_ALLOW_NON_LOOPBACK=1; expose it through an HTTPS reverse proxy".into(),
         );
     }
     let state_path = PathBuf::from(env::var("SAML_HUB_STATE")?);
@@ -69,6 +69,9 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let admin_token = env::var("SAML_HUB_ADMIN_TOKEN")?;
     if admin_token.len() < 32 {
         return Err("SAML_HUB_ADMIN_TOKEN must be at least 32 characters".into());
+    }
+    if !credentials_path.exists() {
+        save_credentials(&credentials_path, &Credentials::default())?;
     }
     load_credentials(&credentials_path)?;
     let mut state = HubState::load(&state_path)?;

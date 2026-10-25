@@ -35,6 +35,70 @@ fn as_str(path: &Path) -> &str {
 }
 
 #[test]
+fn hub_initializes_empty_credentials_on_fresh_volume() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("saml-hub-fresh-{}-{unique}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    let credentials_path = root.join("data/credentials.json");
+    let port = TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let hub = Command::new(env!("CARGO_BIN_EXE_saml-hub"))
+        .env("SAML_HUB_BIND", format!("127.0.0.1:{port}"))
+        .env("SAML_HUB_STATE", root.join("data/state.json"))
+        .env("SAML_HUB_CREDENTIALS", &credentials_path)
+        .env(
+            "SAML_HUB_ADMIN_TOKEN",
+            "admin-token-with-more-than-32-characters",
+        )
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let _fixture = Fixture {
+        root: root.clone(),
+        hub,
+    };
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(2))
+        .build()
+        .unwrap();
+    let base = format!("http://127.0.0.1:{port}");
+    let mut ready = false;
+    for _ in 0..40 {
+        if client
+            .get(format!("{base}/healthz"))
+            .send()
+            .is_ok_and(|response| response.status().is_success())
+        {
+            ready = true;
+            break;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    assert!(ready, "hub did not start with an empty data directory");
+    let credentials: Value = serde_json::from_slice(&fs::read(&credentials_path).unwrap()).unwrap();
+    assert_eq!(credentials["agents"], serde_json::json!({}));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            fs::metadata(&credentials_path)
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+    }
+}
+
+#[test]
 fn hub_receives_only_version_and_isolated_repository_health() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)

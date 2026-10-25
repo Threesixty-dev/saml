@@ -101,11 +101,40 @@ saml-hub
 
 The hub listens on `127.0.0.1:8765` by default. Set `SAML_HUB_BIND` to
 another loopback address or port. Put an HTTPS reverse proxy in front of it
-for remote agents; the hub refuses to bind to a public interface. The server
+for remote agents. A container must set `SAML_HUB_ALLOW_NON_LOOPBACK=1` to
+bind to its private container interface; never publish its raw HTTP port to
+the internet. On a fresh data directory, the hub creates an empty credentials
+file with owner-only permissions. The server
 reloads the credentials file for each heartbeat, so provisioning another
 agent does not require a restart. Open the hub's root page to use the fleet
 dashboard; it asks for `SAML_HUB_ADMIN_TOKEN` and keeps it in browser memory
 for that tab.
+
+### Coolify deployment
+
+`Dockerfile.hub` builds only the hub. In Coolify, deploy it from a Git
+repository using that Dockerfile, or publish the image to a registry and use
+the Docker Image resource. Route `https://saml.coolify.threesixty.dev` to
+container port `8765` through the Coolify HTTPS proxy. Do not configure a
+public host port. Mount persistent storage at `/data` and set the secret
+environment variable `SAML_HUB_ADMIN_TOKEN` to at least 32 random characters.
+The image already sets `SAML_HUB_BIND`, `SAML_HUB_ALLOW_NON_LOOPBACK`,
+`SAML_HUB_STATE`, and `SAML_HUB_CREDENTIALS`. It runs as UID 10001, so a bind
+mount must be writable by that UID. Set the HTTP health check path to
+`/healthz` (the image also includes a Docker health check).
+
+From the deployed container's Coolify terminal, provision each agent's ID:
+
+```sh
+saml-hub provision AGENT_ID /data/credentials.json
+```
+
+Keep the printed token private and set it as `SAML_AGENT_TOKEN` on that agent
+machine. Connect the agent with `saml-agent set-hub --config ./agent.json
+--hub https://saml.coolify.threesixty.dev`. Check `/healthz`, reject an
+unauthenticated `/api/v1/agents` request, then send a heartbeat with
+`saml-agent run --config ./agent.json --once` and confirm that the dashboard
+shows the agent and its repositories.
 
 On the agent machine, set `SAML_AGENT_TOKEN` to the provisioned token and
 start or restart the agent:
