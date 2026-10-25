@@ -421,8 +421,11 @@ mod tests {
                 .errors
                 > 0
         );
-        let serialized = serde_json::to_string(&heartbeat).unwrap();
-        assert!(serialized.contains(root.to_str().unwrap()));
+        let serialized = serde_json::to_value(&heartbeat).unwrap();
+        assert_eq!(
+            serialized["repositories"][0]["details"]["path"],
+            loaded.repositories[0].root.to_string_lossy().as_ref()
+        );
         let mut state = HubState::default();
         state.record(heartbeat.clone()).unwrap();
         assert!(state.agents[&config.agent_id].heartbeat.repositories[0]

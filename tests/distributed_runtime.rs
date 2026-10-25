@@ -233,8 +233,8 @@ fn hub_receives_repository_details_and_keeps_history_compact() {
             as_str(&root.join("bad")),
         ],
     );
-    let config: Value = serde_json::from_slice(&fs::read(&config_path).unwrap()).unwrap();
-    let agent_id = config["agent_id"].as_str().unwrap();
+    let agent_config: Value = serde_json::from_slice(&fs::read(&config_path).unwrap()).unwrap();
+    let agent_id = agent_config["agent_id"].as_str().unwrap();
     let provision = command(
         env!("CARGO_BIN_EXE_saml-hub"),
         &["provision", agent_id, as_str(&credentials_path)],
@@ -448,7 +448,11 @@ fn hub_receives_repository_details_and_keeps_history_compact() {
     assert_eq!(updates[0]["outcome"], "rolled_back");
     assert_eq!(updates[1]["outcome"], "installed");
     let saved = fs::read_to_string(&state_path).unwrap();
-    assert!(saved.contains(as_str(&root)));
+    let saved_state: Value = serde_json::from_str(&saved).unwrap();
+    assert_eq!(
+        saved_state["agents"][agent_id]["heartbeat"]["repositories"][0]["details"]["path"],
+        agent_config["repositories"][0]["root"]
+    );
     assert!(!saved.contains("concept Entity {}"));
     assert!(!saved.contains(token));
     assert!(!saved.contains(admin_token));
