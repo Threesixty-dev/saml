@@ -208,7 +208,7 @@ key. Download artifacts from the same passing commit, then sign the desired
 platform binaries on the trusted signing machine. For example:
 
 ```sh
-python3 scripts/publish-agent-release.py --version 0.3.6 \
+python3 scripts/publish-agent-release.py --version 0.3.7 \
   --key /private/path/update-signing-key.pem --output updates \
   --target macos/aarch64=/path/to/macos-aarch64/saml-agent \
   --target linux/aarch64=/path/to/linux-aarch64/saml-agent
@@ -253,7 +253,7 @@ hub URL, and any Cloudflare Access service token in the environment:
 
 ```sh
 scripts/test-linux-update.sh /path/to/old/saml-agent \
-  /path/to/old/saml-launcher 0.3.6 https://saml.coolify.threesixty.dev
+  /path/to/old/saml-launcher 0.3.7 https://saml.coolify.threesixty.dev
 ```
 
 The script starts an isolated Linux container, waits for the signed update,
