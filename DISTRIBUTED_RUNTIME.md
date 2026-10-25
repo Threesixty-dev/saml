@@ -192,17 +192,27 @@ manifest bytes using the pinned Ed25519 public key in `updates/root.pub`.
 
 The publisher is `scripts/publish-agent-release.py`. It accepts one or more
 `--target OS/ARCH=BINARY` arguments, a stable `--version`, and an Ed25519
-private key. Keep the signing key outside Git with owner-only permissions.
-For a macOS Apple Silicon release:
+private key. It rejects duplicate targets and binaries whose executable format
+or CPU architecture does not match the declared platform. Keep the signing key
+outside Git with owner-only permissions.
+
+The `Agent build` GitHub Actions workflow builds and tests the agent and launcher
+on macOS Apple Silicon, macOS Intel, Linux ARM64, Linux x86-64, and Windows
+x86-64. Each artifact contains both executables and names its source commit.
+The workflow has read-only repository access and never receives the signing
+key. Download artifacts from the same passing commit, then sign the desired
+platform binaries on the trusted signing machine. For example:
 
 ```sh
-cargo build --locked --release --bin saml-agent --bin saml-launcher
-python3 scripts/publish-agent-release.py --version 0.3.2 \
+python3 scripts/publish-agent-release.py --version 0.3.4 \
   --key /private/path/update-signing-key.pem --output updates \
-  --target macos/aarch64=target/release/saml-agent
+  --target macos/aarch64=/path/to/macos-aarch64/saml-agent \
+  --target linux/aarch64=/path/to/linux-aarch64/saml-agent
 ```
 
-Publish the resulting `updates/` files and deploy the hub. The launcher reads
+Add the other platform artifacts to the same command when they are ready to
+ship. Publish the resulting `updates/` files and deploy the hub. Do not publish
+a manifest until its referenced targets are present in the hub image. The launcher reads
 the hub URL from the local agent config and Cloudflare service token from its
 environment. Run it as the OS-supervised process, with paths to the initial
 agent binary and a private state directory:
@@ -219,7 +229,21 @@ binary. It stops the old child, starts the new one, and confirms `/api/status`
 reports the expected version. If the new process fails startup, it restores
 the previous binary. State and previous binaries remain local. The launcher
 itself is a stable bootstrap executable; deploying it initially is a manual
-step. Platform binaries must be published for each target platform.
+step. On Windows, it stores versioned agents with the `.exe` suffix. Platform
+binaries must be published for each target platform.
+
+To smoke-test a Linux ARM64 update against the deployed hub, provide a Linux
+bootstrap agent and launcher from the previous version, the new version, the
+hub URL, and any Cloudflare Access service token in the environment:
+
+```sh
+scripts/test-linux-update.sh /path/to/old/saml-agent \
+  /path/to/old/saml-launcher 0.3.4 https://saml.coolify.threesixty.dev
+```
+
+The script starts an isolated Linux container, waits for the signed update,
+checks the new agent's local portal, then removes the test container. It sends
+no fleet heartbeat and requires no test agent credential.
 
 This is a single-key signed manifest, not a complete TUF repository. Key
 rotation, delegated roles, staged rollouts, and update outcomes in the hub

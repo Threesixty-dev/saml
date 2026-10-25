@@ -49,7 +49,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let state_path = state_dir.join("active.json");
     let mut active = if state_path.exists() {
         let stored: ActiveAgent = serde_json::from_slice(&fs::read(&state_path)?)?;
-        let expected = state_dir.join(format!("saml-agent-{}", stored.version));
+        let expected = agent_binary_path(&state_dir, &stored.version);
         if stored.binary != expected || !expected.is_file() {
             return Err("invalid active agent state".into());
         }
@@ -57,7 +57,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         stored
     } else {
         let version = env!("CARGO_PKG_VERSION");
-        let binary = state_dir.join(format!("saml-agent-{version}"));
+        let binary = agent_binary_path(&state_dir, version);
         fs::copy(&bootstrap, &binary)?;
         make_executable(&binary)?;
         let active = ActiveAgent {
@@ -173,7 +173,7 @@ fn check_update(
     else {
         return Ok(None);
     };
-    let path = state_dir.join(format!("saml-agent-{version}"));
+    let path = agent_binary_path(state_dir, &version.to_string());
     if path.exists() {
         verify_target(&fs::read(&path)?, &target)?;
     } else {
@@ -229,6 +229,13 @@ fn spawn_agent(binary: &Path, config: &Path) -> io::Result<Child> {
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .spawn()
+}
+
+fn agent_binary_path(state_dir: &Path, version: &str) -> PathBuf {
+    state_dir.join(format!(
+        "saml-agent-{version}{}",
+        std::env::consts::EXE_SUFFIX
+    ))
 }
 
 fn stop_agent(child: &mut Child) -> io::Result<()> {

@@ -1,0 +1,73 @@
+name: Agent build
+
+on:
+  push:
+    branches:
+      - main
+      - codex/**
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos/aarch64
+            artifact: macos-aarch64
+            runner: macos-15-arm64
+            suffix: ""
+          - platform: macos/x86_64
+            artifact: macos-x86_64
+            runner: macos-15-intel
+            suffix: ""
+          - platform: linux/aarch64
+            artifact: linux-aarch64
+            runner: ubuntu-24.04-arm
+            suffix: ""
+          - platform: linux/x86_64
+            artifact: linux-x86_64
+            runner: ubuntu-24.04
+            suffix: ""
+          - platform: windows/x86_64
+            artifact: windows-x86_64
+            runner: windows-2025
+            suffix: .exe
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust 1.99
+        shell: bash
+        run: |
+          rustup toolchain install 1.99.0 --profile minimal
+          rustup default 1.99.0
+      - name: Test
+        shell: bash
+        run: cargo test --locked
+      - name: Build release binaries
+        shell: bash
+        run: cargo build --locked --release --bin saml-agent --bin saml-launcher
+      - name: Package binaries
+        shell: bash
+        env:
+          SUFFIX: ${{ matrix.suffix }}
+        run: |
+          mkdir -p dist
+          cp "target/release/saml-agent${SUFFIX}" "dist/saml-agent${SUFFIX}"
+          cp "target/release/saml-launcher${SUFFIX}" "dist/saml-launcher${SUFFIX}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: saml-${{ matrix.artifact }}-${{ github.sha }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
