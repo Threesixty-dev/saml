@@ -1,4 +1,5 @@
 use serde_json::Value;
+use std::collections::BTreeSet;
 use std::fs;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
@@ -45,7 +46,16 @@ fn running_agent_portal_tracks_repository_changes_without_hub() {
     fs::create_dir_all(root.join("good")).unwrap();
     fs::create_dir_all(root.join("good-model")).unwrap();
     fs::create_dir_all(root.join("bad")).unwrap();
-    fs::write(root.join("good-model/model.spec"), "concept Entity {}").unwrap();
+    fs::write(
+        root.join("good-model/model.spec"),
+        "concept Entity { peer { type: Entity } }",
+    )
+    .unwrap();
+    fs::write(
+        root.join("good-model/model.saml"),
+        "entity User { peer: Admin }\nentity Admin { peer: User }\n",
+    )
+    .unwrap();
     fs::write(root.join("bad/model.saml"), "entity Broken {").unwrap();
     let config_path = root.join("agent.json");
     agent_command(&["init", "--config", as_str(&config_path)]);
@@ -126,6 +136,130 @@ fn running_agent_portal_tracks_repository_changes_without_hub() {
         .unwrap();
     assert_eq!(map["concepts"][0]["word"], "entity");
 
+    let workflow: Value = client
+        .get(format!("{base}/api/workflow"))
+        .send()
+        .unwrap()
+        .json()
+        .unwrap();
+    assert_eq!(workflow["schema_version"], 1);
+    assert_eq!(workflow["steps"][1]["action"], "find_item");
+    let search: Value = client
+        .get(format!("{base}/api/query?workspace={good_id}&q=User"))
+        .send()
+        .unwrap()
+        .json()
+        .unwrap();
+    assert_eq!(search["total"], 1);
+    assert_eq!(search["matches"][0]["id"], "/entity:User");
+    let detail_url = search["matches"][0]["detail_url"].as_str().unwrap();
+    let detail: Value = client
+        .get(format!("{base}{detail_url}"))
+        .send()
+        .unwrap()
+        .json()
+        .unwrap();
+    assert_eq!(detail["item"]["name"], "User");
+    assert!(detail["outgoing_links"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|link| link["to"] == "/entity:Admin"));
+    assert!(detail["incoming_links"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|link| link["from"] == "/entity:Admin"));
+    let source_url = detail["sources"][0]["url"].as_str().unwrap();
+    let source: Value = client
+        .get(format!("{base}{source_url}"))
+        .send()
+        .unwrap()
+        .json()
+        .unwrap();
+    assert!(source["content"].as_str().unwrap().contains("entity User"));
+    let concept: Value = client
+        .get(format!(
+            "{base}/api/item?workspace={good_id}&kind=concept&id=entity"
+        ))
+        .send()
+        .unwrap()
+        .json()
+        .unwrap();
+    assert_eq!(concept["item"]["properties"][0]["name"], "peer");
+    assert_eq!(concept["materializations"].as_array().unwrap().len(), 2);
+
+    let mut large_model = "entity User { peer: Admin }\nentity Admin { peer: User }\n".to_owned();
+    for index in 0..51 {
+        large_model.push_str(&format!("entity User{index} {{ peer: Admin }}\n"));
+    }
+    fs::write(root.join("good-model/model.saml"), &large_model).unwrap();
+    let first_page: Value = client
+        .get(format!("{base}/api/query?workspace={good_id}&q=User"))
+        .send()
+        .unwrap()
+        .json()
+        .unwrap();
+    assert_eq!(first_page["total"], 52);
+    assert_eq!(first_page["matches"].as_array().unwrap().len(), 50);
+    let next_url = first_page["next_url"].as_str().unwrap();
+    let second_page: Value = client
+        .get(format!("{base}{next_url}"))
+        .send()
+        .unwrap()
+        .json()
+        .unwrap();
+    assert_eq!(second_page["matches"].as_array().unwrap().len(), 2);
+    assert!(second_page.get("next_url").is_none());
+    let ids: BTreeSet<_> = first_page["matches"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .chain(second_page["matches"].as_array().unwrap())
+        .map(|item| item["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids.len(), 52);
+    large_model.push_str("entity User51 { peer: Admin }\n");
+    fs::write(root.join("good-model/model.saml"), large_model).unwrap();
+    assert_eq!(
+        client
+            .get(format!("{base}{next_url}"))
+            .send()
+            .unwrap()
+            .status(),
+        400
+    );
+    assert_eq!(
+        client
+            .get(format!(
+                "{base}/api/query?workspace={good_id}&q=User&cursor=bad"
+            ))
+            .send()
+            .unwrap()
+            .status(),
+        400
+    );
+    assert_eq!(
+        client
+            .get(format!(
+                "{base}/api/query?workspace={good_id}&q=User&q=Admin"
+            ))
+            .send()
+            .unwrap()
+            .status(),
+        400
+    );
+    assert_eq!(
+        client
+            .get(format!(
+                "{base}/api/source?workspace={good_id}&uri=file%3A%2F%2F%2Fetc%2Fpasswd"
+            ))
+            .send()
+            .unwrap()
+            .status(),
+        404
+    );
+
     agent_command(&[
         "add",
         "--config",
@@ -166,6 +300,14 @@ fn running_agent_portal_tracks_repository_changes_without_hub() {
         .send()
         .unwrap();
     assert_eq!(removed.status(), 400);
+    assert_eq!(
+        client
+            .get(format!("{base}/api/query?workspace={good_id}&q=User"))
+            .send()
+            .unwrap()
+            .status(),
+        400
+    );
 }
 
 #[test]

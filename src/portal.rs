@@ -1,6 +1,7 @@
 use crate::diagnostics::diagnostic_report;
 use crate::distributed::AgentConfig;
 use crate::semantic::analyze;
+use crate::semantic_query;
 use crate::workspace::collect_sources;
 use serde_json::json;
 use std::collections::HashMap;
@@ -237,6 +238,86 @@ fn handle(mut stream: TcpStream, source: &PortalSource) -> io::Result<()> {
                 &body,
             )
         }
+        "/api/workflow" => {
+            let body = serde_json::to_vec(&semantic_query::workflow())?;
+            respond(
+                &mut stream,
+                "200 OK",
+                "application/json; charset=utf-8",
+                &body,
+            )
+        }
+        "/api/query" | "/api/item" | "/api/source" => {
+            let Some(repo) = selected_repo(query, &roots) else {
+                return respond(
+                    &mut stream,
+                    "400 Bad Request",
+                    "text/plain",
+                    b"Invalid workspace",
+                );
+            };
+            let mut sources = HashMap::new();
+            collect_sources(&repo.model_root, &mut sources);
+            let (status, result) = match route {
+                "/api/query" => match (parameter(query, "q"), parameter(query, "cursor")) {
+                    (Ok(Some(q)), Ok(cursor)) if !q.trim().is_empty() && q.len() <= 200 => {
+                        let q = q.trim();
+                        match semantic_query::search_with_cursor(
+                            &analyze(&sources),
+                            &repo.id,
+                            q,
+                            cursor.as_deref(),
+                        ) {
+                            Ok(mut result) => {
+                                if let Some(next_cursor) = result["next_cursor"].as_str() {
+                                    result["next_url"] = json!(format!(
+                                        "/api/query?workspace={}&q={}&cursor={}",
+                                        semantic_query::encode(&repo.id),
+                                        semantic_query::encode(q),
+                                        semantic_query::encode(next_cursor),
+                                    ));
+                                }
+                                ("200 OK", result)
+                            }
+                            Err(error) => ("400 Bad Request", json!({"error": error})),
+                        }
+                    }
+                    _ => (
+                        "400 Bad Request",
+                        json!({"error": "Provide one nonempty q of at most 200 bytes and at most one cursor"}),
+                    ),
+                },
+                "/api/item" => match (parameter(query, "kind"), parameter(query, "id")) {
+                    (Ok(Some(kind)), Ok(Some(id))) if !id.is_empty() => {
+                        match semantic_query::item(&analyze(&sources), &repo.id, &kind, &id) {
+                            Some(item) => ("200 OK", item),
+                            None => ("404 Not Found", json!({"error": "Item not found"})),
+                        }
+                    }
+                    _ => (
+                        "400 Bad Request",
+                        json!({"error": "Provide one kind and id"}),
+                    ),
+                },
+                _ => match parameter(query, "uri") {
+                    Ok(Some(uri)) => match sources.get(&uri) {
+                        Some(content) => ("200 OK", json!({"uri": uri, "content": content})),
+                        None => ("404 Not Found", json!({"error": "Source not found"})),
+                    },
+                    _ => (
+                        "400 Bad Request",
+                        json!({"error": "Provide one source uri"}),
+                    ),
+                },
+            };
+            let body = serde_json::to_vec(&result)?;
+            respond(
+                &mut stream,
+                status,
+                "application/json; charset=utf-8",
+                &body,
+            )
+        }
         "/api/guide" => respond(
             &mut stream,
             "200 OK",
@@ -259,22 +340,52 @@ fn local_host(host: &str) -> bool {
 }
 
 fn selected_root<'a>(query: &str, roots: &'a [PortalRepository]) -> Option<&'a Path> {
-    let mut selected = None;
+    selected_repo(query, roots).map(|repo| repo.model_root.as_path())
+}
+
+fn selected_repo<'a>(query: &str, roots: &'a [PortalRepository]) -> Option<&'a PortalRepository> {
+    match parameter(query, "workspace").ok()? {
+        Some(id) => roots.iter().find(|repo| repo.id == id),
+        None => roots.first(),
+    }
+}
+
+fn parameter(query: &str, key: &str) -> Result<Option<String>, ()> {
+    let mut found = None;
     for part in query.split('&') {
-        if let Some(value) = part.strip_prefix("workspace=") {
-            if selected.is_some() {
-                return None;
-            }
-            selected = Some(value);
+        let Some((name, value)) = part.split_once('=') else {
+            continue;
+        };
+        if name != key {
+            continue;
         }
+        if found.is_some() {
+            return Err(());
+        }
+        let mut bytes = Vec::with_capacity(value.len());
+        let input = value.as_bytes();
+        let mut index = 0;
+        while index < input.len() {
+            match input[index] {
+                b'%' if index + 2 < input.len() => {
+                    let hex = std::str::from_utf8(&input[index + 1..index + 3]).map_err(|_| ())?;
+                    bytes.push(u8::from_str_radix(hex, 16).map_err(|_| ())?);
+                    index += 3;
+                }
+                b'%' => return Err(()),
+                b'+' => {
+                    bytes.push(b' ');
+                    index += 1;
+                }
+                byte => {
+                    bytes.push(byte);
+                    index += 1;
+                }
+            }
+        }
+        found = Some(String::from_utf8(bytes).map_err(|_| ())?);
     }
-    match selected {
-        Some(id) => roots
-            .iter()
-            .find(|repo| repo.id == id)
-            .map(|repo| repo.model_root.as_path()),
-        None => roots.first().map(|repo| repo.model_root.as_path()),
-    }
+    Ok(found)
 }
 
 fn respond(
@@ -329,5 +440,20 @@ mod tests {
         assert!(local_host("[::1]:8787"));
         assert!(!local_host("localhost.example.com:8787"));
         assert!(!local_host("127.0.0.1.evil.example:8787"));
+    }
+
+    #[test]
+    fn query_parameters_decode_once_and_reject_ambiguous_values() {
+        assert_eq!(
+            parameter("id=%2Fentity%3AUser", "id"),
+            Ok(Some("/entity:User".into()))
+        );
+        assert_eq!(
+            parameter("q=User+Portal", "q"),
+            Ok(Some("User Portal".into()))
+        );
+        assert!(parameter("q=one&q=two", "q").is_err());
+        assert!(parameter("q=%ZZ", "q").is_err());
+        assert!(parameter("q=%FF", "q").is_err());
     }
 }
