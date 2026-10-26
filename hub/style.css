@@ -137,6 +137,9 @@ h2 { font: 400 clamp(27px, 2.7vw, 38px)/1.1 Georgia, "Times New Roman", serif; l
 .graph-heading { display: flex; justify-content: space-between; align-items: end; gap: 25px; padding: 26px 28px 23px; border-bottom: 1px solid var(--line); }
 .graph-heading h2 { margin: 0 0 6px; }
 .graph-heading p { margin: 0; color: var(--muted); font-size: 13px; }
+.graph-controls { display: flex; flex-direction: column; align-items: flex-end; gap: 12px; }
+.graph-open { color: var(--teal); font: 700 10px "Menlo", "Consolas", monospace; letter-spacing: .1em; text-decoration: none; border-bottom: 1px solid currentColor; padding-bottom: 3px; }
+.graph-open:hover, .graph-open:focus-visible { color: var(--rust); }
 .graph-tools { display: flex; align-items: center; gap: 5px; }
 .graph-tools label { margin-right: 8px; color: var(--muted); font: 10px "Menlo", "Consolas", monospace; letter-spacing: .1em; white-space: nowrap; }
 .graph-tools input { width: clamp(150px, 17vw, 250px); height: 38px; border: 1px solid var(--line); background: white; padding: 0 11px; color: var(--ink); outline: none; font-size: 12px; }
@@ -169,6 +172,25 @@ h2 { font: 400 clamp(27px, 2.7vw, 38px)/1.1 Georgia, "Times New Roman", serif; l
 .inspector-link:hover, .inspector-link:focus-visible { color: var(--teal); }
 .inspector-overflow { margin: 12px 0; }
 .graph-caption { border-top: 1px solid var(--line); margin: 0; padding: 12px 28px; color: var(--muted); font: 11px/1.5 "Menlo", "Consolas", monospace; }
+.graph-page { display: flex; flex: 1; flex-direction: column; min-height: 0; padding: 0 clamp(20px, 2.3vw, 42px) 18px; }
+.graph-page-navigation { min-height: 74px; display: flex; align-items: center; gap: 26px; }
+.graph-page-navigation .back-link { margin: 0; white-space: nowrap; }
+.graph-page-navigation h1 { margin: 0; font: 400 26px/1.1 Georgia, serif; letter-spacing: -.025em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.graph-page-navigation > span { margin-left: auto; color: var(--muted); font: 10px "Menlo", "Consolas", monospace; white-space: nowrap; }
+.graph-page-slot { display: flex; flex: 1; min-height: 0; }
+.graph-page .graph-panel { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; box-shadow: none; }
+.graph-page .graph-heading { flex: none; }
+.graph-page .graph-layout { flex: 1; min-height: 0; }
+.graph-page .graph-stage, .graph-page .graph-inspector { min-height: 0; }
+.graph-page #model-graph { height: 100%; }
+.graph-page .graph-inspector { max-height: none; }
+.graph-page .graph-caption { flex: none; }
+.graph-page .graph-open { display: none; }
+body.graph-mode .page { height: 100dvh; min-height: 0; overflow: hidden; }
+body.graph-mode .topbar { flex: none; }
+body.graph-mode main { display: flex; flex-direction: column; max-width: none; min-height: 0; padding: 0; }
+body.graph-mode .message { position: fixed; bottom: 10px; right: 18px; z-index: 2; background: var(--cream); margin: 0; padding: 8px 12px; }
+body.graph-mode .message:empty, body.graph-mode footer { display: none; }
 .detail-sections { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 30px; margin: 56px 0 0; }
 .detail-sections .repo-detail-section { background: var(--cream); border-top: 3px solid var(--ink); padding: 20px; }
 .detail-sections .repo-detail-list { max-height: 280px; }
@@ -199,6 +221,7 @@ footer i { color: var(--rust); font-style: normal; }
   .repo-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .detail-facts { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .graph-heading { align-items: start; flex-direction: column; }
+  .graph-controls { align-items: flex-start; }
   .graph-layout { grid-template-columns: minmax(0, 1fr) 210px; }
 }
 @media (max-width: 680px) {
@@ -218,6 +241,16 @@ footer i { color: var(--rust); font-style: normal; }
   .detail-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .graph-layout { grid-template-columns: 1fr; }
   .graph-inspector { max-height: 250px; border-left: 0; border-top: 1px solid var(--line); }
+  body.graph-mode .page { height: auto; min-height: 100dvh; overflow: visible; }
+  body.graph-mode main { display: block; }
+  .graph-page { min-height: calc(100dvh - 64px); padding: 0 14px 14px; }
+  .graph-page-navigation { min-height: 96px; flex-wrap: wrap; justify-content: space-between; gap: 5px 14px; padding: 14px 0; }
+  .graph-page-navigation h1 { order: 2; width: 100%; font-size: 24px; }
+  .graph-page-navigation > span { font-size: 9px; }
+  .graph-page-slot, .graph-page .graph-panel { flex: none; }
+  .graph-page .graph-layout { flex: none; }
+  .graph-page .graph-stage { height: min(64dvh, 700px); min-height: 350px; }
+  .graph-page .graph-inspector { max-height: 260px; }
   .detail-sections { grid-template-columns: 1fr; gap: 20px; }
   .update-event { grid-template-columns: 1fr auto; gap: 3px 10px; }
   .update-versions { grid-column: 1 / -1; }

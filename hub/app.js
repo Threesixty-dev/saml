@@ -5,6 +5,8 @@ const dashboard = document.querySelector('#dashboard');
 const fleet = document.querySelector('#fleet');
 const message = document.querySelector('#message');
 const repositoryPage = document.querySelector('#repository-page');
+const graphPage = document.querySelector('#graph-page');
+const graphPanel = document.querySelector('#graph-panel');
 let token = '';
 let authMode = 'token';
 let latestData = null;
@@ -86,6 +88,10 @@ function detailList(title, values, format = value => value) {
 
 function repositoryUrl(agentId, repositoryId) {
   return `/repository?agent=${encodeURIComponent(agentId)}&repo=${encodeURIComponent(repositoryId)}`;
+}
+
+function graphUrl(agentId, repositoryId) {
+  return `/graph?agent=${encodeURIComponent(agentId)}&repo=${encodeURIComponent(repositoryId)}`;
 }
 
 function renderRepository(repository, agentId) {
@@ -231,32 +237,47 @@ async function loadGraph(agentId, repositoryId, key) {
   }
 }
 
-function renderDetail(data) {
+function renderDetail(data, fullscreen = false) {
   const params = new URLSearchParams(location.search);
   const agentId = params.get('agent');
   const repositoryId = params.get('repo');
   const record = data.agents?.[agentId];
   const repository = record?.heartbeat.repositories.find(item => item.id === repositoryId);
+  document.querySelector(fullscreen ? '#graph-page-slot' : '#repository-graph-slot').append(graphPanel);
   document.querySelector('#fleet-hero').hidden = true;
   dashboard.hidden = true;
-  repositoryPage.hidden = false;
+  repositoryPage.hidden = fullscreen;
+  graphPage.hidden = !fullscreen;
+  document.querySelector('#open-graph').href = graphUrl(agentId, repositoryId);
+  document.querySelector('#back-to-repository').href = repositoryUrl(agentId, repositoryId);
   if (!repository) {
     detailKey = '';
     graphLoaded = false;
+    document.title = 'Repository unavailable / SAML Observatory';
     document.querySelector('#detail-name').textContent = 'Repository unavailable';
     document.querySelector('#detail-subtitle').textContent = 'This repository is not in the latest fleet report.';
+    document.querySelector('#graph-repository-name').textContent = 'Repository unavailable';
+    document.querySelector('#graph-repository-meta').textContent = 'No current report';
     document.querySelector('#detail-facts').replaceChildren();
     document.querySelector('#detail-sections').replaceChildren();
     document.querySelector('#model-graph').replaceChildren();
+    document.querySelector('#graph-search').value = '';
+    document.querySelector('#graph-inspector').replaceChildren(
+      element('span', 'section-index', 'INSPECTOR'),
+      element('p', '', 'No graph items to inspect.'),
+    );
     document.querySelector('#graph-empty').textContent = 'No graph report available.';
     document.querySelector('#graph-empty').hidden = false;
+    document.querySelector('#graph-caption').textContent = '';
     return;
   }
   const details = repository.details;
   const key = `${agentId}:${repositoryId}`;
   const name = details?.name || repositoryId.slice(0, 18);
-  document.title = `${name} / SAML Observatory`;
+  document.title = `${name}${fullscreen ? ' graph' : ''} / SAML Observatory`;
   document.querySelector('#detail-name').textContent = name;
+  document.querySelector('#graph-repository-name').textContent = name;
+  document.querySelector('#graph-repository-meta').textContent = `${details?.git.branch || 'Detached / no Git'} · Agent ${agentId.slice(0, 8)}`;
   document.querySelector('#detail-subtitle').textContent = details
     ? `${details.git.branch || 'Detached / no Git'} · ${modelLocation(details)}`
     : 'Repository details are not available in this heartbeat.';
@@ -323,8 +344,10 @@ function showRoute() {
 
 function render(data) {
   latestData = data;
-  if (location.pathname === '/repository') {
-    renderDetail(data);
+  const fullscreen = location.pathname === '/graph';
+  document.body.classList.toggle('graph-mode', fullscreen);
+  if (location.pathname === '/repository' || fullscreen) {
+    renderDetail(data, fullscreen);
     return;
   }
   document.title = 'SAML / Observatory';
@@ -332,6 +355,7 @@ function render(data) {
   graphLoaded = false;
   document.querySelector('#fleet-hero').hidden = false;
   repositoryPage.hidden = true;
+  graphPage.hidden = true;
   dashboard.hidden = false;
   const expandedAgents = new Set([...fleet.querySelectorAll('.agent-repos[data-expanded="true"]')].map(item => item.dataset.agent));
   const entries = Object.entries(data.agents || {})
@@ -420,6 +444,7 @@ document.querySelector('#disconnect').addEventListener('click', () => {
   token = '';
   dashboard.hidden = true;
   repositoryPage.hidden = true;
+  graphPage.hidden = true;
   access.hidden = false;
   message.textContent = '';
   tokenInput.focus();
@@ -429,6 +454,14 @@ document.querySelector('#back-to-fleet').addEventListener('click', event => {
   history.pushState(null, '', '/');
   showRoute();
 });
+for (const id of ['#open-graph', '#back-to-repository']) {
+  document.querySelector(id).addEventListener('click', event => {
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    history.pushState(null, '', event.currentTarget.href);
+    showRoute();
+  });
+}
 window.addEventListener('popstate', showRoute);
 
 function updateClock() {

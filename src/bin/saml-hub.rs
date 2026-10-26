@@ -141,7 +141,7 @@ fn handle(
         }
     }
     match (request.method(), route.as_str()) {
-        (Method::Get, "/" | "/repository") => respond_bytes(
+        (Method::Get, "/" | "/repository" | "/graph") => respond_bytes(
             request,
             200,
             "text/html; charset=utf-8",
