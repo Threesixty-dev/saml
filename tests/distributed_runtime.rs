@@ -317,6 +317,11 @@ fn hub_receives_repository_details_and_keeps_history_compact() {
             .status(),
         200
     );
+    let graph_page = client.get(format!("{base}/graph")).send().unwrap();
+    assert_eq!(graph_page.status(), 200);
+    let graph_html = graph_page.text().unwrap();
+    assert!(graph_html.contains("id=\"graph-page\""));
+    assert!(graph_html.contains("id=\"open-graph\""));
     let metadata = client
         .get(format!("{base}/updates/metadata/1.root.json"))
         .send()

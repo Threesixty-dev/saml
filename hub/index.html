@@ -65,18 +65,24 @@
             </div>
           </div>
           <div id="detail-facts" class="detail-facts"></div>
-          <section class="graph-panel" aria-labelledby="graph-title">
-            <div class="graph-heading">
-              <div><span class="section-index">SEMANTIC STRUCTURE / 01</span><h2 id="graph-title">Relationship graph</h2><p id="graph-description">Materializations and their resolved links.</p></div>
-              <div class="graph-tools"><label for="graph-search">FIND AN ITEM</label><input id="graph-search" type="search" placeholder="Name, kind, or ID"><button id="graph-zoom-out" type="button" aria-label="Zoom out">−</button><button id="graph-zoom-in" type="button" aria-label="Zoom in">+</button><button id="graph-reset" type="button">FIT</button></div>
-            </div>
-            <div class="graph-layout">
-              <div class="graph-stage"><svg id="model-graph" role="img" aria-label="Repository semantic graph"></svg><p id="graph-empty" class="graph-empty" hidden></p></div>
-              <aside id="graph-inspector" class="graph-inspector" aria-live="polite"><span class="section-index">INSPECTOR</span><p>Choose a node to inspect its connections.</p></aside>
-            </div>
-            <p id="graph-caption" class="graph-caption"></p>
-          </section>
+          <div id="repository-graph-slot">
+            <section id="graph-panel" class="graph-panel" aria-labelledby="graph-title">
+              <div class="graph-heading">
+                <div><span class="section-index">SEMANTIC STRUCTURE / 01</span><h2 id="graph-title">Relationship graph</h2><p id="graph-description">Materializations and their resolved links.</p></div>
+                <div class="graph-controls"><a id="open-graph" class="graph-open" href="/graph">OPEN FULLSCREEN ↗</a><div class="graph-tools"><label for="graph-search">FIND AN ITEM</label><input id="graph-search" type="search" placeholder="Name, kind, or ID"><button id="graph-zoom-out" type="button" aria-label="Zoom out">−</button><button id="graph-zoom-in" type="button" aria-label="Zoom in">+</button><button id="graph-reset" type="button">FIT</button></div></div>
+              </div>
+              <div class="graph-layout">
+                <div class="graph-stage"><svg id="model-graph" role="img" aria-label="Repository semantic graph"></svg><p id="graph-empty" class="graph-empty" hidden></p></div>
+                <aside id="graph-inspector" class="graph-inspector" aria-live="polite"><span class="section-index">INSPECTOR</span><p>Choose a node to inspect its connections.</p></aside>
+              </div>
+              <p id="graph-caption" class="graph-caption"></p>
+            </section>
+          </div>
           <div id="detail-sections" class="detail-sections"></div>
+        </section>
+        <section id="graph-page" class="graph-page" hidden>
+          <div class="graph-page-navigation"><a id="back-to-repository" class="back-link" href="/repository">← REPOSITORY DETAILS</a><h1 id="graph-repository-name">Repository</h1><span id="graph-repository-meta"></span></div>
+          <div id="graph-page-slot" class="graph-page-slot"></div>
         </section>
         <p id="message" class="message" role="status" aria-live="polite"></p>
       </main>
