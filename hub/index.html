@@ -6,6 +6,7 @@
     <meta name="theme-color" content="#102b2e">
     <title>SAML / Observatory</title>
     <link rel="stylesheet" href="/style.css">
+    <script src="/graph.js" defer></script>
     <script src="/app.js" defer></script>
   </head>
   <body>
@@ -16,7 +17,7 @@
       </header>
 
       <main>
-        <section class="hero" aria-labelledby="page-title">
+        <section class="hero" id="fleet-hero" aria-labelledby="page-title">
           <div class="hero-copy">
             <div class="eyebrow"><span class="eyebrow-line"></span> FLEET OVERVIEW <span class="eyebrow-index">/ 01</span></div>
             <h1 id="page-title">See the state<br>of every <em>model.</em></h1>
@@ -48,6 +49,34 @@
           <div class="fleet-heading"><div><span class="section-index" id="registry-index">AGENT REGISTRY / 03</span><h2>Machines &amp; repositories</h2></div><span class="fleet-caption">LATEST 100 HEALTH SAMPLES PER AGENT</span></div>
           <div id="fleet" class="fleet"></div>
           <p id="empty" class="empty" hidden>No heartbeats yet. Provision an agent and start <code>saml-agent run</code> to see it here.</p>
+        </section>
+        <section id="repository-page" class="repository-page" hidden>
+          <div class="detail-navigation"><a id="back-to-fleet" class="back-link" href="/">← ALL REPOSITORIES</a><button type="button" id="refresh-detail">REFRESH REPORT ↻</button></div>
+          <div class="detail-hero">
+            <div>
+              <span class="section-index">REPOSITORY / MODEL ATLAS</span>
+              <h1 id="detail-name">Repository</h1>
+              <p id="detail-subtitle"></p>
+            </div>
+            <div class="detail-identity">
+              <span id="detail-health"></span>
+              <span id="detail-agent"></span>
+              <span id="detail-head"></span>
+            </div>
+          </div>
+          <div id="detail-facts" class="detail-facts"></div>
+          <section class="graph-panel" aria-labelledby="graph-title">
+            <div class="graph-heading">
+              <div><span class="section-index">SEMANTIC STRUCTURE / 01</span><h2 id="graph-title">Relationship graph</h2><p id="graph-description">Materializations and their resolved links.</p></div>
+              <div class="graph-tools"><label for="graph-search">FIND AN ITEM</label><input id="graph-search" type="search" placeholder="Name, kind, or ID"><button id="graph-zoom-out" type="button" aria-label="Zoom out">−</button><button id="graph-zoom-in" type="button" aria-label="Zoom in">+</button><button id="graph-reset" type="button">FIT</button></div>
+            </div>
+            <div class="graph-layout">
+              <div class="graph-stage"><svg id="model-graph" role="img" aria-label="Repository semantic graph"></svg><p id="graph-empty" class="graph-empty" hidden></p></div>
+              <aside id="graph-inspector" class="graph-inspector" aria-live="polite"><span class="section-index">INSPECTOR</span><p>Choose a node to inspect its connections.</p></aside>
+            </div>
+            <p id="graph-caption" class="graph-caption"></p>
+          </section>
+          <div id="detail-sections" class="detail-sections"></div>
         </section>
         <p id="message" class="message" role="status" aria-live="polite"></p>
       </main>

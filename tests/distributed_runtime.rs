@@ -301,6 +301,22 @@ fn hub_receives_repository_details_and_keeps_history_compact() {
             .status(),
         200
     );
+    assert_eq!(
+        client
+            .get(format!("{base}/graph.js"))
+            .send()
+            .unwrap()
+            .status(),
+        200
+    );
+    assert_eq!(
+        client
+            .get(format!("{base}/repository"))
+            .send()
+            .unwrap()
+            .status(),
+        200
+    );
     let metadata = client
         .get(format!("{base}/updates/metadata/1.root.json"))
         .send()
@@ -378,6 +394,15 @@ fn hub_receives_repository_details_and_keeps_history_compact() {
     assert_eq!(heartbeat["repositories"][0]["health"], "healthy");
     assert_eq!(heartbeat["repositories"][1]["health"], "degraded");
     assert_eq!(heartbeat["repositories"][0]["details"]["name"], "good");
+    assert_eq!(heartbeat["repositories"][0]["details"]["path"], ".");
+    assert_eq!(
+        heartbeat["repositories"][0]["details"]["model"]["source_paths"],
+        serde_json::json!(["model.spec"])
+    );
+    assert_eq!(
+        heartbeat["repositories"][0]["details"]["model"]["source_uris"],
+        serde_json::json!([])
+    );
     assert_eq!(
         heartbeat["repositories"][0]["details"]["model"]["concept_count"],
         1
@@ -391,6 +416,49 @@ fn hub_receives_repository_details_and_keeps_history_compact() {
     assert_eq!(
         heartbeat["repositories"][0]["details"]["git"]["available"],
         false
+    );
+    let repository_id = heartbeat["repositories"][0]["id"].as_str().unwrap();
+    let graph_url = format!("{base}/api/v1/repository-graphs/{agent_id}/{repository_id}");
+    assert_eq!(client.get(&graph_url).send().unwrap().status(), 401);
+    let graph: Value = client
+        .get(&graph_url)
+        .bearer_auth(admin_token)
+        .send()
+        .unwrap()
+        .json()
+        .unwrap();
+    assert_eq!(graph["available"], true);
+    assert_eq!(graph["node_count"], 0);
+    let mut invalid_graph = serde_json::json!({
+        "schema_version": PROTOCOL_VERSION,
+        "agent_id": agent_id,
+        "repository_id": repository_id,
+        "graph": graph,
+    });
+    invalid_graph["graph"]["links"] =
+        serde_json::json!([{"from":"missing","to":"missing","relation":"target"}]);
+    invalid_graph["graph"]["link_count"] = serde_json::json!(1);
+    assert_eq!(
+        client
+            .post(format!("{base}/api/v1/repository-graphs"))
+            .bearer_auth(token)
+            .json(&invalid_graph)
+            .send()
+            .unwrap()
+            .status(),
+        400
+    );
+    assert_eq!(
+        client
+            .get(format!(
+                "{base}/api/v1/repository-graphs/{agent_id}/{}",
+                uuid::Uuid::new_v4()
+            ))
+            .bearer_auth(admin_token)
+            .send()
+            .unwrap()
+            .status(),
+        404
     );
     let history = &registry["agents"][agent_id]["history"];
     assert_eq!(history.as_array().unwrap().len(), 2);
@@ -451,8 +519,9 @@ fn hub_receives_repository_details_and_keeps_history_compact() {
     let saved_state: Value = serde_json::from_str(&saved).unwrap();
     assert_eq!(
         saved_state["agents"][agent_id]["heartbeat"]["repositories"][0]["details"]["path"],
-        agent_config["repositories"][0]["root"]
+        "."
     );
+    assert!(!saved.contains(root.to_str().unwrap()));
     assert!(!saved.contains("concept Entity {}"));
     assert!(!saved.contains(token));
     assert!(!saved.contains(admin_token));

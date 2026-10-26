@@ -4,8 +4,13 @@ const tokenInput = document.querySelector('#admin-token');
 const dashboard = document.querySelector('#dashboard');
 const fleet = document.querySelector('#fleet');
 const message = document.querySelector('#message');
+const repositoryPage = document.querySelector('#repository-page');
 let token = '';
 let authMode = 'token';
+let latestData = null;
+let detailKey = '';
+let graphLoaded = false;
+let graphLoadingKey = '';
 
 function element(tag, className = '', value = '') {
   const node = document.createElement(tag);
@@ -79,67 +84,30 @@ function detailList(title, values, format = value => value) {
   return section;
 }
 
-function renderRepository(repository, agentId, openRepos) {
+function repositoryUrl(agentId, repositoryId) {
+  return `/repository?agent=${encodeURIComponent(agentId)}&repo=${encodeURIComponent(repositoryId)}`;
+}
+
+function renderRepository(repository, agentId) {
   const details = repository.details;
-  const row = element('details', 'repo');
-  row.dataset.key = `${agentId}:${repository.id}`;
-  row.open = openRepos.has(row.dataset.key);
-  const summary = element('summary', 'repo-summary');
+  const row = element('a', 'repo-row');
+  row.href = repositoryUrl(agentId, repository.id);
   const heading = element('span', 'repo-heading');
   heading.append(element('strong', 'repo-name', details?.name || repository.id.slice(0, 18)));
   heading.append(element('span', 'repo-subtitle', details
     ? `${details.git.branch || 'detached / no Git'} · ${details.model.concept_count} concepts · ${details.model.materialization_count} items`
     : repository.id));
-  summary.append(heading, badge(repository.health));
-  row.append(summary);
-  if (!details) {
-    row.append(element('p', 'repo-detail-empty', 'Details are unavailable in this report.'));
-    return row;
-  }
-
-  const body = element('div', 'repo-detail-body');
-  const path = element('div', 'repo-paths');
-  path.append(element('span', '', `SOURCE  ${details.path}`));
-  path.append(element('span', '', `MODEL   ${details.model_root}`));
-  body.append(path);
-
-  const model = details.model;
-  const git = details.git;
-  const metrics = element('div', 'repo-facts');
-  for (const [label, value] of [
-    ['SOURCE FILES', model.source_file_count], ['CONCEPTS', model.concept_count],
-    ['ITEMS', model.materialization_count], ['LINKS', model.link_count],
-    ['BINDINGS', model.binding_count], ['ERRORS', model.errors],
-    ['WARNINGS', model.warnings], ['GIT CHANGES', git.change_count],
-  ]) {
-    const fact = element('div', 'repo-fact');
-    fact.append(element('strong', '', String(value)), element('span', '', label));
-    metrics.append(fact);
-  }
-  body.append(metrics);
-  if (!model.available) body.append(element('p', 'repo-detail-empty', 'Model workspace is unavailable.'));
-
-  const grid = element('div', 'repo-detail-grid');
-  grid.append(detailList('Concepts', model.concepts));
-  grid.append(detailList('Model items', model.materializations, item => `${item.kind} ${item.name} · ${item.id}`));
-  grid.append(detailList('Model sources', model.source_uris));
-  grid.append(detailList('Diagnostics', model.diagnostics, item => `${item.severity.toUpperCase()} ${item.code || 'syntax'} · ${item.message} · ${item.uri}`));
-  if (git.available) {
-    grid.append(detailList('Branches', git.branches));
-    grid.append(detailList('Recent commits', git.recent_commits, item => `${item.id.slice(0, 9)} · ${item.subject} · ${item.authored_at}`));
-    grid.append(detailList('Working tree', git.changes, item => `${item.status} ${item.path}`));
-  } else {
-    grid.append(detailList('Git', ['No Git worktree detected']));
-  }
-  body.append(grid);
-  if (model.truncated || git.truncated) {
-    body.append(element('p', 'repo-truncated', 'Some lists are shortened for the dashboard. Counts reflect the full repository.'));
-  }
-  row.append(body);
+  row.append(heading, badge(repository.health), element('span', 'repo-arrow', '↗'));
+  row.addEventListener('click', event => {
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    history.pushState(null, '', row.href);
+    showRoute();
+  });
   return row;
 }
 
-function renderAgent(id, record, now, updates, openRepos, expandedAgents) {
+function renderAgent(id, record, now, updates, expandedAgents) {
   const heartbeat = record.heartbeat;
   const age = Math.max(0, now - record.last_seen_unix_secs);
   const stale = age > 90;
@@ -165,14 +133,14 @@ function renderAgent(id, record, now, updates, openRepos, expandedAgents) {
   repos.append(element('div', 'repo-title', `REPOSITORIES / ${heartbeat.repositories.length}`));
   const visible = expandedAgents.has(id) ? heartbeat.repositories : heartbeat.repositories.slice(0, 30);
   for (const repository of visible) {
-    repos.append(renderRepository(repository, id, openRepos));
+    repos.append(renderRepository(repository, id));
   }
   if (!expandedAgents.has(id) && heartbeat.repositories.length > 30) {
     const more = element('button', 'repo-more', `SHOW ${heartbeat.repositories.length - 30} MORE REPOSITORIES`);
     more.type = 'button';
     more.addEventListener('click', () => {
       for (const repository of heartbeat.repositories.slice(30)) {
-        repos.insertBefore(renderRepository(repository, id, openRepos), more);
+        repos.insertBefore(renderRepository(repository, id), more);
       }
       repos.dataset.expanded = 'true';
       more.remove();
@@ -186,8 +154,185 @@ function renderAgent(id, record, now, updates, openRepos, expandedAgents) {
   return card;
 }
 
+function sourcePath(uri, details) {
+  if (!uri) return 'unknown source';
+  if (!uri.startsWith('file:')) return uri;
+  try {
+    const absolute = decodeURIComponent(new URL(uri).pathname);
+    const repositoryRoot = details.path || '';
+    const modelRoot = details.model_root || '';
+    const inRepository = modelRoot === repositoryRoot || modelRoot.startsWith(`${repositoryRoot}/`);
+    const base = inRepository ? repositoryRoot : modelRoot;
+    if (base && absolute.startsWith(`${base}/`)) return absolute.slice(base.length + 1);
+    return absolute.split('/').pop() || 'unknown source';
+  } catch {
+    return 'unknown source';
+  }
+}
+
+function modelSources(details) {
+  if (details.model.source_paths?.length) return details.model.source_paths;
+  return (details.model.source_uris || []).map(uri => sourcePath(uri, details));
+}
+
+function modelLocation(details) {
+  if (details.model.path_base === 'model_root' || details.model_root === 'external') {
+    return 'External model · file paths are relative to its model root';
+  }
+  if (details.model.path_base === 'repository') return 'File paths are relative to the repository';
+  const inside = details.model_root === details.path || details.model_root.startsWith(`${details.path}/`);
+  return inside ? 'File paths are relative to the repository' : 'External model · file paths are relative to its model root';
+}
+
+async function loadGraph(agentId, repositoryId, key) {
+  if (graphLoadingKey === key) return;
+  graphLoadingKey = key;
+  const empty = document.querySelector('#graph-empty');
+  const caption = document.querySelector('#graph-caption');
+  const svg = document.querySelector('#model-graph');
+  const inspector = document.querySelector('#graph-inspector');
+  empty.hidden = false;
+  empty.textContent = 'Loading the model graph…';
+  svg.replaceChildren();
+  inspector.replaceChildren(element('span', 'section-index', 'INSPECTOR'), element('p', '', 'Choose a node to inspect its connections.'));
+  try {
+    const response = await fetch(`/api/v1/repository-graphs/${encodeURIComponent(agentId)}/${encodeURIComponent(repositoryId)}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      cache: 'no-store',
+    });
+    if (key !== detailKey) return;
+    if (response.status === 404) {
+      empty.textContent = 'The graph has not arrived yet. The agent will send it with its next report.';
+      caption.textContent = '';
+      return;
+    }
+    if (!response.ok) throw new Error(`Graph request failed (${response.status}).`);
+    const graph = await response.json();
+    if (key !== detailKey) return;
+    window.renderModelGraph(graph);
+    graphLoaded = true;
+    const items = document.querySelector('#detail-model-items');
+    if (items && graph.available) {
+      const fullList = detailList('Model items', graph.nodes, item => `${item.kind} ${item.name} · ${item.id}`);
+      fullList.id = 'detail-model-items';
+      if (graph.truncated) fullList.append(element('p', 'repo-truncated', `Showing ${graph.nodes.length} of ${graph.node_count} items.`));
+      items.replaceWith(fullList);
+    }
+    caption.textContent = graph.truncated
+      ? `Showing ${graph.nodes.length} of ${graph.node_count} items and ${graph.links.length} of ${graph.link_count} links.`
+      : `${graph.node_count} items · ${graph.link_count} resolved links. Scroll to zoom; drag to pan.`;
+  } catch (error) {
+    if (key !== detailKey) return;
+    empty.hidden = false;
+    empty.textContent = error.message;
+    caption.textContent = '';
+  } finally {
+    if (graphLoadingKey === key) graphLoadingKey = '';
+  }
+}
+
+function renderDetail(data) {
+  const params = new URLSearchParams(location.search);
+  const agentId = params.get('agent');
+  const repositoryId = params.get('repo');
+  const record = data.agents?.[agentId];
+  const repository = record?.heartbeat.repositories.find(item => item.id === repositoryId);
+  document.querySelector('#fleet-hero').hidden = true;
+  dashboard.hidden = true;
+  repositoryPage.hidden = false;
+  if (!repository) {
+    detailKey = '';
+    graphLoaded = false;
+    document.querySelector('#detail-name').textContent = 'Repository unavailable';
+    document.querySelector('#detail-subtitle').textContent = 'This repository is not in the latest fleet report.';
+    document.querySelector('#detail-facts').replaceChildren();
+    document.querySelector('#detail-sections').replaceChildren();
+    document.querySelector('#model-graph').replaceChildren();
+    document.querySelector('#graph-empty').textContent = 'No graph report available.';
+    document.querySelector('#graph-empty').hidden = false;
+    return;
+  }
+  const details = repository.details;
+  const key = `${agentId}:${repositoryId}`;
+  const name = details?.name || repositoryId.slice(0, 18);
+  document.title = `${name} / SAML Observatory`;
+  document.querySelector('#detail-name').textContent = name;
+  document.querySelector('#detail-subtitle').textContent = details
+    ? `${details.git.branch || 'Detached / no Git'} · ${modelLocation(details)}`
+    : 'Repository details are not available in this heartbeat.';
+  const identity = document.querySelector('.detail-identity');
+  identity.replaceChildren(
+    badge(repository.health),
+    element('span', '', `AGENT ${agentId.slice(0, 8)} · v${record.heartbeat.version}`),
+    element('span', '', details?.git.head ? `HEAD ${details.git.head.slice(0, 12)}` : 'NO GIT HEAD'),
+  );
+  if (key === detailKey) {
+    if (!graphLoaded) loadGraph(agentId, repositoryId, key);
+    return;
+  }
+  detailKey = key;
+  graphLoaded = false;
+  const facts = document.querySelector('#detail-facts');
+  const sections = document.querySelector('#detail-sections');
+  facts.replaceChildren();
+  sections.replaceChildren();
+  if (!details) {
+    sections.append(element('p', 'repo-detail-empty', 'The agent omitted details to keep its heartbeat within the size limit.'));
+    loadGraph(agentId, repositoryId, key);
+    return;
+  }
+  const model = details.model;
+  const git = details.git;
+  for (const [label, value] of [
+    ['SOURCE FILES', model.source_file_count], ['CONCEPTS', model.concept_count],
+    ['MODEL ITEMS', model.materialization_count], ['LINKS', model.link_count],
+    ['BINDINGS', model.binding_count], ['ERRORS', model.errors],
+    ['WARNINGS', model.warnings], ['GIT CHANGES', git.change_count],
+  ]) {
+    const fact = element('div', 'detail-fact');
+    fact.append(element('strong', '', String(value)), element('span', '', label));
+    facts.append(fact);
+  }
+  const sources = detailList('Model files', modelSources(details));
+  sources.querySelector('h4').after(element('p', 'source-note', modelLocation(details)));
+  sections.append(sources);
+  sections.append(detailList(model.concept_count > model.concepts.length ? 'Concepts · preview' : 'Concepts', model.concepts));
+  const items = detailList('Model items · preview', model.materializations, item => `${item.kind} ${item.name} · ${item.id}`);
+  items.id = 'detail-model-items';
+  sections.append(items);
+  sections.append(detailList('Diagnostics', model.diagnostics, item =>
+    `${item.severity.toUpperCase()} ${item.code || 'syntax'} · ${item.message} · ${sourcePath(item.uri, details)}`));
+  if (git.available) {
+    sections.append(detailList('Branches', git.branches));
+    sections.append(detailList('Recent commits', git.recent_commits, item => `${item.id.slice(0, 9)} · ${item.subject} · ${item.authored_at}`));
+    sections.append(detailList('Working tree', git.changes, item => `${item.status} ${item.path}`));
+  } else {
+    sections.append(detailList('Git', ['No Git worktree detected']));
+  }
+  if (model.truncated || git.truncated) {
+    sections.append(element('p', 'repo-truncated', 'List previews are bounded. Counts reflect the full repository; the graph has its own coverage indicator.'));
+  }
+  loadGraph(agentId, repositoryId, key);
+}
+
+function showRoute() {
+  if (latestData) render(latestData);
+  else load();
+  window.scrollTo({ top: 0, behavior: 'instant' });
+}
+
 function render(data) {
-  const openRepos = new Set([...fleet.querySelectorAll('details.repo[open]')].map(item => item.dataset.key));
+  latestData = data;
+  if (location.pathname === '/repository') {
+    renderDetail(data);
+    return;
+  }
+  document.title = 'SAML / Observatory';
+  detailKey = '';
+  graphLoaded = false;
+  document.querySelector('#fleet-hero').hidden = false;
+  repositoryPage.hidden = true;
+  dashboard.hidden = false;
   const expandedAgents = new Set([...fleet.querySelectorAll('.agent-repos[data-expanded="true"]')].map(item => item.dataset.agent));
   const entries = Object.entries(data.agents || {})
     .sort((left, right) => right[1].last_seen_unix_secs - left[1].last_seen_unix_secs);
@@ -208,7 +353,7 @@ function render(data) {
   document.querySelector('#attention-count').textContent = attention;
   document.querySelector('#updated-at').textContent = `UPDATED ${new Date(now * 1000).toLocaleTimeString()}`;
   fleet.replaceChildren(...entries.map(([id, record]) =>
-    renderAgent(id, record, now, data.update_events?.[id] || [], openRepos, expandedAgents)));
+    renderAgent(id, record, now, data.update_events?.[id] || [], expandedAgents)));
   document.querySelector('#empty').hidden = entries.length > 0;
 }
 
@@ -231,7 +376,6 @@ async function load() {
     if (!response.ok) throw new Error(`Hub request failed (${response.status}).`);
     render(await response.json());
     access.hidden = true;
-    dashboard.hidden = false;
     message.textContent = '';
   } catch (error) {
     message.textContent = error.message;
@@ -267,13 +411,25 @@ accessForm.addEventListener('submit', event => {
   load();
 });
 document.querySelector('#refresh').addEventListener('click', load);
+document.querySelector('#refresh-detail').addEventListener('click', () => {
+  detailKey = '';
+  graphLoaded = false;
+  load();
+});
 document.querySelector('#disconnect').addEventListener('click', () => {
   token = '';
   dashboard.hidden = true;
+  repositoryPage.hidden = true;
   access.hidden = false;
   message.textContent = '';
   tokenInput.focus();
 });
+document.querySelector('#back-to-fleet').addEventListener('click', event => {
+  event.preventDefault();
+  history.pushState(null, '', '/');
+  showRoute();
+});
+window.addEventListener('popstate', showRoute);
 
 function updateClock() {
   document.querySelector('#clock').textContent = new Date().toLocaleTimeString([], {

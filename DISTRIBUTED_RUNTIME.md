@@ -49,20 +49,24 @@ HTTPS requests. Loopback HTTP is allowed for local development. The protocol
 uses periodic heartbeats; no inbound connection to the user's machine is
 required. A heartbeat includes a stable agent ID, app version, OS,
 architecture, agent health, and one opaque ID and health state per repository.
-Each repository also reports its name and paths, model inventory and diagnostics
+Each repository also reports its name and repository-relative model paths, model inventory and diagnostics
 summary, Git working-tree changes, branches, and recent commit subjects.
 It has a schema version so agent and hub releases can evolve independently.
 The hub records last-seen state and the latest 100 samples per agent in an
 atomically replaced JSON file, exposed by an authenticated API. A central
 dashboard shows recent presence, versions, repository details, and health history.
+Each repository opens on its own page with a searchable semantic relationship
+graph. Files in an external model workspace are labeled and shown relative to
+that model root.
 The launcher also reports verified release attempts to the hub. OpenTelemetry
 export remains future work.
 
 Inventory and Git lists are bounded, with full counts and truncation flags.
 When a fleet exceeds the heartbeat size limit, repository health is retained
 and some detail snapshots are omitted. Health history stores only IDs and
-health states, keeping it compact. The heartbeat contains metadata and
-diagnostic messages but no model source text, complete semantic maps, LLM
+health states, keeping it compact. The agent uploads a separate graph report
+after each successful heartbeat, capped at 500 items and 2,000 resolved links.
+The heartbeat contains metadata and diagnostic messages but no model source text, LLM
 prompts, credentials, or Git remote URLs. The agent reports its telemetry level
 at `/api/status`. Local checking and MCP use remain available without the hub.
 An unhealthy repository does not make unrelated repositories unavailable.
@@ -179,8 +183,11 @@ The hub exposes `GET /healthz`, `GET /api/v1/config`, and
 mode. In token mode, the fleet endpoint requires
 `Authorization: Bearer <SAML_HUB_ADMIN_TOKEN>`; in external mode, the proxy
 controls access. The fleet endpoint returns the last heartbeat and bounded
-history per agent. The agent sends to `POST /api/v1/heartbeat` using its own
-provisioned credential in either mode. The local analyzer, LLM commands, and
+history per agent. The agent sends to `POST /api/v1/heartbeat` and then
+`POST /api/v1/repository-graphs` using its own provisioned credential in either
+mode. `GET /api/v1/repository-graphs/{agent_id}/{repository_id}` uses the same
+dashboard authorization as `GET /api/v1/agents`. Graphs are persisted with hub
+state and removed when the agent unregisters a repository. The local analyzer, LLM commands, and
 portal continue to work if the hub is unreachable.
 
 ## Signed agent updates
