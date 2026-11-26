@@ -1,0 +1,7 @@
+boundary Scope {}
+
+concept Data {}
+
+concept Service {
+  reads { type: [Data] }
+}

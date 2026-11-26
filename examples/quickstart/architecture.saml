@@ -1,0 +1,8 @@
+scope Content {
+  Public data Article {}
+  Public data Author {}
+}
+
+scope Delivery {
+  service ArticlesApi { reads: [Article, Author] }
+}

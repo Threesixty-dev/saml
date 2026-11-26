@@ -1,74 +1,63 @@
 # SAML
 
-SAML stands for **Software Architecture Modeling Language**. Its goal is to reduce semantic ambiguity when modeling software systems. A stable semantic core will let users define metamodels tailored to a particular problem, then enforce their concepts and rules as a system model is built. The model is intended to express a program at a higher level of abstraction, with technical decisions refining it.
+SAML (Software Architecture Modeling Language) is an experimental language for
+describing software architecture with a vocabulary defined by the model author.
+A `.spec` file or `spec.saml` introduces concepts and boundaries; `.saml` files
+use those words to describe a system. The current analyzer checks typed
+references, required properties, scope, and visibility. It does not verify that
+the implementation matches the model.
 
-The project is in its initial stage. Language syntax, tools, and examples will be documented here as they are added.
+## Start with the language
 
-An initial [language server](LANGUAGE_SERVER.md) supports editing the evolving `.saml` examples.
+- [Language guide](LANGUAGE_SPECIFICATION.md): write a vocabulary and model,
+  understand the checked rules, and use SAML in another repository.
+- [Working quickstart](examples/quickstart/): a two-file model with two
+  boundaries and a typed list of references.
+- [Semantic map](SEMANTIC_MODEL.md): details of name resolution, diagnostics,
+  and the analyzer's JSON output.
 
-The [semantic map](SEMANTIC_MODEL.md) has a Rust analyzer, a JSON CLI, and a local 3D browser viewer.
-
-The [distributed runtime](DISTRIBUTED_RUNTIME.md) includes a portable
-`saml-agent` that hosts the local portal and LLM API for multiple registered
-repositories. It can send health/version heartbeats to a self-hosted
-`saml-hub` with a fleet dashboard; the local service also runs without a hub.
-The runtime guide includes setup, credential provisioning, and the hub API.
-The separate `saml-launcher` can install signed agent releases automatically.
-See the runtime guide for publishing, trust, and rollout details.
-
-For persistent multi-repository use:
-
-```sh
-saml-agent init --config ./agent.json
-saml-agent add --config ./agent.json --repo /path/to/repo-a
-saml-agent add --config ./agent.json --repo /path/to/repo-b
-saml-agent run --config ./agent.json
-```
-
-For an MCP client, launch the same agent registry over standard input/output:
+To run the example from source, you need Rust and Cargo; project CI uses Rust
+1.99.0. If needed, clone the public repository:
 
 ```sh
-saml-agent mcp --config /absolute/path/to/agent.json
+git clone https://github.com/Threesixty-dev/saml.git
+cd saml
 ```
 
-The [MCP server guide](MCP_SERVER.md) lists its tools, connection setup, and
-step-by-step model lookup workflow. `get_repository_info` adds repository
-identity, model inventory, diagnostics, Git changes, branches, and recent
-commits; `get_repository_git_history` pages through older commits. This mode
-does not need the HTTP portal or hub connection.
-
-If a repository's model is kept separately, register it with `--model-root`:
+From the SAML repository root, validate the working example:
 
 ```sh
-saml-agent add --config ./agent.json --repo /path/to/repo --model-root /path/to/model
+cargo run --locked --bin saml-check -- examples/quickstart
 ```
 
-The portal retains the repository identity and reads the specified model
-workspace. An empty model workspace reports degraded health.
-
-For one-off viewing, `saml-view` can serve multiple repositories at once:
+The expected result has two files, zero errors, and zero warnings. To inspect
+the resolved architecture as JSON, run:
 
 ```sh
-saml-view /path/to/repo-a /path/to/repo-b
+cargo run --locked --bin saml-map -- examples/quickstart
 ```
 
-Use `/api/workspaces` to list them; `/api/repository`, `/api/git`, `/api/map`, and `/api/diagnostics` accept
-`?workspace=<id>`. The portal has a repository selector. Each repository is
-analyzed independently.
+## Use SAML in another repository
 
-To use SAML with a tool-enabled LLM in any project, see the [agent guide](LLM_GUIDE.md).
-The `saml-check` command reports syntax and semantic diagnostics as JSON and
-exits with status 1 on errors. The local viewer also serves an agent-facing
-guide and diagnostics at `/api/guide` and `/api/diagnostics`.
+Keep the vocabulary and model with the code they describe, for example in
+`architecture/saml/spec.saml` and `architecture/saml/system.saml`. Download a
+[language release](LANGUAGE_SERVER.md#get-and-install-the-server) for your
+platform when one is available; it includes `saml-check`, `saml-map`, and
+`saml-lsp`. Then run `saml-check architecture/saml` from the other repository.
+Add that command to CI after the first model is valid. See the
+[language guide](LANGUAGE_SPECIFICATION.md#using-saml-in-another-repository)
+for the workflow and current validation limits.
 
-Install the standalone tools with `cargo install --path .` from this checkout.
-In another project, put vocabulary in a `.spec` file (or `spec.saml`) and models
-in `.saml` files, then run `saml-check .` or `saml-view .` from that project.
-`saml-check` and `saml-map` also accept multiple directories and return one
-result per repository in a `workspaces` array; a single directory retains the
-original JSON shape.
-Give an LLM with file and command access the path to `LLM_GUIDE.md` and instruct
-it to run `saml-check .` after edits. An LLM with local HTTP access can also
-read the viewer's `/api/guide`, `/api/diagnostics`, and `/api/map` endpoints.
+## Other tooling
 
-See [competitors](competitors/README.md) for worked examples of existing modeling approaches.
+The [language server setup guide](LANGUAGE_SERVER.md#get-and-install-the-server)
+shows where to obtain `saml-lsp`, how to install it, and how to connect the
+included VS Code extension in another repository. The [agent guide](LLM_GUIDE.md)
+explains how an LLM can read and check a model. The
+[distributed runtime](DISTRIBUTED_RUNTIME.md) and
+[MCP server](MCP_SERVER.md) are optional ways to browse and expose models from
+multiple repositories; they are not required to write or validate SAML.
+
+The larger [article-publication sketch](project/example-1/) explores language
+ideas and currently has known diagnostics. Use the quickstart as a validated
+starting point.
