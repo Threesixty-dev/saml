@@ -25,6 +25,18 @@ saml-agent add --config ./agent.json --repo /path/to/repo-b
 saml-agent run --config ./agent.json
 ```
 
+For an MCP client, launch the same agent registry over standard input/output:
+
+```sh
+saml-agent mcp --config /absolute/path/to/agent.json
+```
+
+The [MCP server guide](MCP_SERVER.md) lists its tools, connection setup, and
+step-by-step model lookup workflow. `get_repository_info` adds repository
+identity, model inventory, diagnostics, Git changes, branches, and recent
+commits; `get_repository_git_history` pages through older commits. This mode
+does not need the HTTP portal or hub connection.
+
 If a repository's model is kept separately, register it with `--model-root`:
 
 ```sh
@@ -40,7 +52,7 @@ For one-off viewing, `saml-view` can serve multiple repositories at once:
 saml-view /path/to/repo-a /path/to/repo-b
 ```
 
-Use `/api/workspaces` to list them; `/api/map` and `/api/diagnostics` accept
+Use `/api/workspaces` to list them; `/api/repository`, `/api/git`, `/api/map`, and `/api/diagnostics` accept
 `?workspace=<id>`. The portal has a repository selector. Each repository is
 analyzed independently.
 

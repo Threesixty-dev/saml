@@ -169,7 +169,7 @@ fn hub_initializes_empty_credentials_on_fresh_volume() {
 }
 
 #[test]
-fn hub_receives_only_version_and_isolated_repository_health() {
+fn hub_receives_repository_details_and_keeps_history_compact() {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -233,8 +233,8 @@ fn hub_receives_only_version_and_isolated_repository_health() {
             as_str(&root.join("bad")),
         ],
     );
-    let config: Value = serde_json::from_slice(&fs::read(&config_path).unwrap()).unwrap();
-    let agent_id = config["agent_id"].as_str().unwrap();
+    let agent_config: Value = serde_json::from_slice(&fs::read(&config_path).unwrap()).unwrap();
+    let agent_id = agent_config["agent_id"].as_str().unwrap();
     let provision = command(
         env!("CARGO_BIN_EXE_saml-hub"),
         &["provision", agent_id, as_str(&credentials_path)],
@@ -301,6 +301,27 @@ fn hub_receives_only_version_and_isolated_repository_health() {
             .status(),
         200
     );
+    assert_eq!(
+        client
+            .get(format!("{base}/graph.js"))
+            .send()
+            .unwrap()
+            .status(),
+        200
+    );
+    assert_eq!(
+        client
+            .get(format!("{base}/repository"))
+            .send()
+            .unwrap()
+            .status(),
+        200
+    );
+    let graph_page = client.get(format!("{base}/graph")).send().unwrap();
+    assert_eq!(graph_page.status(), 200);
+    let graph_html = graph_page.text().unwrap();
+    assert!(graph_html.contains("id=\"graph-page\""));
+    assert!(graph_html.contains("id=\"open-graph\""));
     let metadata = client
         .get(format!("{base}/updates/metadata/1.root.json"))
         .send()
@@ -340,6 +361,18 @@ fn hub_receives_only_version_and_isolated_repository_health() {
     assert_eq!(rejected.status(), 401);
     assert!(!state_path.exists());
 
+    let mut legacy = serde_json::to_value(&heartbeat).unwrap();
+    for repository in legacy["repositories"].as_array_mut().unwrap() {
+        repository.as_object_mut().unwrap().remove("details");
+    }
+    let accepted = client
+        .post(format!("{base}/api/v1/heartbeat"))
+        .bearer_auth(token)
+        .json(&legacy)
+        .send()
+        .unwrap();
+    assert_eq!(accepted.status(), 202);
+
     let output = Command::new(env!("CARGO_BIN_EXE_saml-agent"))
         .args(["run", "--config", as_str(&config_path), "--once"])
         .env("SAML_AGENT_TOKEN", token)
@@ -365,6 +398,77 @@ fn hub_receives_only_version_and_isolated_repository_health() {
     assert_eq!(heartbeat["version"], env!("CARGO_PKG_VERSION"));
     assert_eq!(heartbeat["repositories"][0]["health"], "healthy");
     assert_eq!(heartbeat["repositories"][1]["health"], "degraded");
+    assert_eq!(heartbeat["repositories"][0]["details"]["name"], "good");
+    assert_eq!(heartbeat["repositories"][0]["details"]["path"], ".");
+    assert_eq!(
+        heartbeat["repositories"][0]["details"]["model"]["source_paths"],
+        serde_json::json!(["model.spec"])
+    );
+    assert_eq!(
+        heartbeat["repositories"][0]["details"]["model"]["source_uris"],
+        serde_json::json!([])
+    );
+    assert_eq!(
+        heartbeat["repositories"][0]["details"]["model"]["concept_count"],
+        1
+    );
+    assert!(
+        heartbeat["repositories"][1]["details"]["model"]["errors"]
+            .as_u64()
+            .unwrap()
+            > 0
+    );
+    assert_eq!(
+        heartbeat["repositories"][0]["details"]["git"]["available"],
+        false
+    );
+    let repository_id = heartbeat["repositories"][0]["id"].as_str().unwrap();
+    let graph_url = format!("{base}/api/v1/repository-graphs/{agent_id}/{repository_id}");
+    assert_eq!(client.get(&graph_url).send().unwrap().status(), 401);
+    let graph: Value = client
+        .get(&graph_url)
+        .bearer_auth(admin_token)
+        .send()
+        .unwrap()
+        .json()
+        .unwrap();
+    assert_eq!(graph["available"], true);
+    assert_eq!(graph["node_count"], 0);
+    let mut invalid_graph = serde_json::json!({
+        "schema_version": PROTOCOL_VERSION,
+        "agent_id": agent_id,
+        "repository_id": repository_id,
+        "graph": graph,
+    });
+    invalid_graph["graph"]["links"] =
+        serde_json::json!([{"from":"missing","to":"missing","relation":"target"}]);
+    invalid_graph["graph"]["link_count"] = serde_json::json!(1);
+    assert_eq!(
+        client
+            .post(format!("{base}/api/v1/repository-graphs"))
+            .bearer_auth(token)
+            .json(&invalid_graph)
+            .send()
+            .unwrap()
+            .status(),
+        400
+    );
+    assert_eq!(
+        client
+            .get(format!(
+                "{base}/api/v1/repository-graphs/{agent_id}/{}",
+                uuid::Uuid::new_v4()
+            ))
+            .bearer_auth(admin_token)
+            .send()
+            .unwrap()
+            .status(),
+        404
+    );
+    let history = &registry["agents"][agent_id]["history"];
+    assert_eq!(history.as_array().unwrap().len(), 2);
+    assert!(history[0]["repositories"][0].get("details").is_none());
+    assert!(history[1]["repositories"][0].get("details").is_none());
     let failed = UpdateEvent {
         schema_version: PROTOCOL_VERSION,
         agent_id: agent_id.into(),
@@ -417,7 +521,13 @@ fn hub_receives_only_version_and_isolated_repository_health() {
     assert_eq!(updates[0]["outcome"], "rolled_back");
     assert_eq!(updates[1]["outcome"], "installed");
     let saved = fs::read_to_string(&state_path).unwrap();
-    assert!(!saved.contains(as_str(&root)));
+    let saved_state: Value = serde_json::from_str(&saved).unwrap();
+    assert_eq!(
+        saved_state["agents"][agent_id]["heartbeat"]["repositories"][0]["details"]["path"],
+        "."
+    );
+    assert!(!saved.contains(root.to_str().unwrap()));
+    assert!(!saved.contains("concept Entity {}"));
     assert!(!saved.contains(token));
     assert!(!saved.contains(admin_token));
     #[cfg(unix)]
