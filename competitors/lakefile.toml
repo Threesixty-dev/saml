@@ -1,0 +1,14 @@
+name = "saml-comparison-examples"
+version = "0.1.0"
+defaultTargets = ["ColdStorage", "ArticlePublication"]
+
+[leanOptions]
+warningAsError = true
+
+[[lean_lib]]
+name = "ColdStorage"
+srcDir = "lean"
+
+[[lean_lib]]
+name = "ArticlePublication"
+srcDir = "article-publication/lean"

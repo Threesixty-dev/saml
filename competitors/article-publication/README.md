@@ -1,12 +1,12 @@
 # Article publication across modeling approaches
 
-These native examples translate the intent of [SAML example 1](../../project/example-1/) into seven other approaches. They supplement the [cold-store comparison](../README.md); they do not claim that the languages have equivalent semantics.
+These native examples translate the intent of [SAML example 1](../../project/example-1/) into eight other approaches. They supplement the [cold-store comparison](../README.md); they do not claim that the languages have equivalent semantics.
 
 ## Shared case and assumptions
 
 An author submits an article. Evaluation decides whether it can proceed to publication. A browser frontend consumes an Articles REST API provided by a backend. The backend exposes article data; that data should correspond to the domain article. A publication queue separates submission from evaluation.
 
-The SAML sketch leaves `ArticleLettersNumberIsHigherThan` without a predicate. The Epsilon and Refinery examples use **at least 100 letters** so that their rules can be evaluated; this threshold is an example assumption, not a SAML requirement. The examples use the intended `UserPortalFrontend` spelling and treat RabbitMQ as the intended queue technology even though its declaration is currently absent from the SAML files. Authentication is outside the comparison because the SAML relationship does not yet specify its target or conditions.
+The SAML sketch leaves `ArticleLettersNumberIsHigherThan` without a predicate. The Epsilon, Refinery, and Lean examples use **at least 100 letters** so that their rules can be evaluated; this threshold is an example assumption, not a SAML requirement. The examples use the intended `UserPortalFrontend` spelling and treat RabbitMQ as the intended queue technology even though its declaration is currently absent from the SAML files. Authentication is outside the comparison because the SAML relationship does not yet specify its target or conditions.
 
 ## What each example shows
 
@@ -19,8 +19,9 @@ The SAML sketch leaves `ArticleLettersNumberIsHigherThan` without a predicate. T
 | AADL | [article_publication.aadl](aadl/article_publication.aadl) | Frontend, backend, queue, evaluation, and publication as systems connected by event-data ports | The file describes technical paths, not REST semantics or the business rule. OSATE validation could not run in this sandbox. |
 | LikeC4 | [model.c4](likec4/model.c4), [check.mjs](likec4/check.mjs) | Custom kinds for the domain, stages, applications, capability, queue, and typed relationships | Native validation passes. A separate JavaScript check verifies provider existence, stage ordering, and data realization in the modeled graph. |
 | Structurizr/C4 | [workspace.dsl](structurizr/workspace.dsl) | Person, system, frontend/backend/queue/store containers, backend API and workflow components | Native DSL validation passes. The letter-count and success rules remain descriptions, not enforced predicates. |
+| Lean 4 | [ArticlePublication.lean](lean/ArticlePublication.lean), [walkthrough](lean/README.md) | Typed domain definitions and instances, structural constraints, publication transitions, and proofs | Lean checks baseline conformance, rejection of invalid alternatives, and a theorem that every reachable publication satisfies the letter-count policy. |
 
-The important comparison is **where a rule lives**. ArchiMate and Structurizr make relationships visible; Acme/Armani, EMF/Epsilon, and Refinery can express explicit constraints; AADL checks technical structure and can support specialized analyses. LikeC4's example check runs in JavaScript alongside the model. SAML's proposed distinction would be a stable core that enforces rules defined in a curated metamodel while preserving meaning across domain, application, and technical refinements. That behavior is not yet implemented in this repository.
+The important comparison is **where a rule lives**. ArchiMate and Structurizr make relationships visible; Acme/Armani, EMF/Epsilon, and Refinery can express explicit constraints; AADL checks technical structure and can support specialized analyses. LikeC4's example check runs in JavaScript alongside the model. Lean hosts definitions, instances, executable checks, and proofs in one language. SAML's proposed distinction would be a stable core that enforces rules defined in a curated metamodel while preserving meaning across domain, application, and technical refinements. That behavior is not yet implemented in this repository; the Lean example explores a possible formal foundation without integrating it into SAML.
 
 ## Validation record
 
@@ -33,6 +34,10 @@ Checked on 2026-10-22:
 - Refinery and Acme/Armani: sources were written against their documented syntax, but were not parsed by their native tools.
 - AADL: OSATE CLI initialization was blocked by the local sandbox's `launchd` bootstrap restriction, before parsing this file. Syntax and model checks remain unverified.
 
+Added and checked on 2026-10-29:
+
+- Lean: `lake build` succeeded with Lean 4.35.0 and warnings treated as errors. This checks the structural examples and reachability proofs. Temporary mutations removing the offered API and adding a publication bypass were rejected. See [the Lean validation record](../VALIDATION.md#lean-4).
+
 ## Primary references
 
 - [ArchiMate overview and modeling concepts](https://archimate-community.pages.opengroup.org/workgroups/archimate-101/)
@@ -42,3 +47,4 @@ Checked on 2026-10-22:
 - [SEI AADL overview](https://www.sei.cmu.edu/projects/architecture-analysis-and-design-language-aadl/)
 - [LikeC4 specification](https://likec4.dev/dsl/specification/) and [validation guide](https://likec4.dev/guides/validate-your-model/)
 - [Structurizr DSL reference](https://docs.structurizr.com/dsl/language) and [CLI validation](https://docs.structurizr.com/cli/validate)
+- [Theorem Proving in Lean](https://lean-lang.org/theorem_proving_in_lean4/) and [proof validation](https://lean-lang.org/doc/reference/latest/ValidatingProofs/)
