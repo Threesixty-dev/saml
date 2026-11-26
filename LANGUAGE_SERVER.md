@@ -1,16 +1,88 @@
 # SAML language server (prototype)
 
-Build and test from the repository root:
+## Get and install the server
+
+The [SAML releases](https://github.com/Threesixty-dev/saml/releases) are the
+distribution point for versioned language tools. When a `saml-language-vX.Y.Z`
+release is available, download the archive for your OS and CPU architecture.
+It contains `saml-lsp`, `saml-check`, and `saml-map` (with `.exe` suffixes on
+Windows). Extract them into a directory on your `PATH`, or keep them in a
+dedicated directory and use the absolute path to `saml-lsp` in your editor.
+The release also includes `SHA256SUMS.txt` for verifying downloads.
+Compare the downloaded file's SHA-256 digest with its line in that file before
+extracting it.
+
+For example, on an Apple Silicon Mac, after downloading the matching archive:
 
 ```sh
-cargo build
-cargo test
+mkdir -p "$HOME/.local/bin"
+tar -xzf saml-language-v0.3.8-macos-aarch64.tar.gz -C "$HOME/.local/bin"
 ```
 
-The server binary is `target/debug/saml-lsp`. It uses standard LSP messages on
-stdin and stdout. The `vscode-saml` extension starts it automatically for
-`*.saml` and `*.spec` files when this repository is open in VS Code. Set
-`saml.serverPath` in VS Code if the binary lives elsewhere.
+Choose the archive matching your system and release version. Windows releases
+use `.zip`; extract the three `.exe` files into a directory of your choice.
+
+If a language release is not yet available, the `saml-lsp` source is in the
+public [Threesixty-dev/saml repository](https://github.com/Threesixty-dev/saml).
+Install Rust and Cargo, then build and install the binary from a checkout:
+
+```sh
+git clone https://github.com/Threesixty-dev/saml.git
+cd saml
+cargo install --locked --path . --bin saml-lsp
+```
+
+Cargo installs the binary in its bin directory (normally `~/.cargo/bin` on
+macOS and Linux). Run `cargo install --list` to confirm that `saml-lsp` is
+installed. The server speaks LSP over standard input and output; it is started
+by an editor or other LSP client, rather than run interactively in a terminal.
+
+If you are developing this repository, `cargo build --locked --bin saml-lsp`
+instead creates `target/debug/saml-lsp`. To test the whole project, run
+`cargo test --locked`.
+
+## Use it in VS Code
+
+Download `saml-vX.Y.Z.vsix` from the same language release, then install it
+with `code --install-extension /path/to/saml-vX.Y.Z.vsix` or VS Code's
+**Install from VSIX...** command. The VSIX and binaries are separate assets.
+
+If you are building from source, the VS Code extension is in
+[`vscode-saml/`](vscode-saml/). With Node.js, npm, and the VS Code `code`
+command available, package and install it locally:
+
+```sh
+cd vscode-saml
+npx @vscode/vsce@4.1.1 package --out saml.vsix
+code --install-extension saml.vsix
+```
+
+Open the repository containing your `.spec` and `.saml` files in VS Code. Set
+`saml.serverPath` in that workspace's settings to the **absolute path** of the
+installed `saml-lsp` binary if VS Code cannot find it on `PATH`, for example:
+
+```json
+{
+  "saml.serverPath": "/home/you/.cargo/bin/saml-lsp"
+}
+```
+
+On macOS, the path is usually `/Users/you/.cargo/bin/saml-lsp`; on Windows,
+use the absolute path to `saml-lsp.exe`. You can locate the binary with
+`command -v saml-lsp` on macOS/Linux or `where saml-lsp` on Windows. Without
+`saml.serverPath`, the extension first looks for `target/debug/saml-lsp` under
+the first open workspace folder and then searches VS Code's `PATH`. The
+extension activates for `*.saml` and `*.spec` files. Server output appears in
+VS Code's **SAML Language Server**
+output channel; missing-binary and initialization errors appear as VS Code
+notifications.
+
+For another LSP-capable editor, configure `saml-lsp` as a stdio server for
+`.saml` and `.spec` files and open the directory containing the model as the
+workspace root. The server reads vocabulary from that workspace's `.spec`
+files and `spec.saml`.
+
+## Language features
 
 Only `boundary`, `concept`, and `rule` are built-in keywords. A `.spec` file can
 introduce vocabulary with declarations such as `concept Entity {}` and
@@ -112,3 +184,14 @@ prose relations or repeated assignments within one fragment. Renaming stops if
 an untracked identifier with the same spelling could be left behind.
 
 Run the tests with `cargo test`.
+
+## Publishing a language release
+
+The [language release workflow](.github/workflows/language-release.yml) tests
+and packages the language tools for macOS (Apple Silicon and Intel), Linux
+(ARM64 and x86-64), and Windows (x86-64), plus one VSIX. It checks that
+`Cargo.toml` and `vscode-saml/package.json` have the same version. After the
+changes pass CI and reach the intended release commit, tag that commit
+`saml-language-vX.Y.Z` and push the tag. The workflow publishes a GitHub Release
+only after every platform build and the VSIX package succeed. Pull requests
+and manual workflow runs build artifacts without publishing a release.

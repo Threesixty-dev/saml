@@ -5,6 +5,19 @@ const path = require('path');
 const isSaml = document => document.languageId === 'saml' || document.languageId === 'saml-spec';
 const isManifest = document => document.uri.path.endsWith('.spec') || document.uri.path.endsWith('/spec.saml');
 
+function findServer(folder, configured) {
+  if (configured) return configured;
+  const name = process.platform === 'win32' ? 'saml-lsp.exe' : 'saml-lsp';
+  const workspaceBinary = path.join(folder, 'target', 'debug', name);
+  if (fs.existsSync(workspaceBinary)) return workspaceBinary;
+  for (const directory of (process.env.PATH || '').split(path.delimiter)) {
+    if (!directory) continue;
+    const candidate = path.join(directory, name);
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
 function asPosition(value) {
   return new vscode.Position(value.line, value.character);
 }
@@ -102,9 +115,9 @@ async function activate(context) {
   const folder = vscode.workspace.workspaceFolders?.[0];
   if (!folder) return;
   const configured = vscode.workspace.getConfiguration('saml').get('serverPath');
-  const binary = configured || path.join(folder.uri.fsPath, 'target', 'debug', 'saml-lsp');
-  if (!fs.existsSync(binary)) {
-    vscode.window.showErrorMessage(`SAML server not found: ${binary}. Run cargo build in the workspace.`);
+  const binary = findServer(folder.uri.fsPath, configured);
+  if (!binary || !fs.existsSync(binary)) {
+    vscode.window.showErrorMessage('SAML server not found. Install a language release or set saml.serverPath.');
     return;
   }
 

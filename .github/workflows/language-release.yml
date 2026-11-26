@@ -1,0 +1,176 @@
+name: Language release
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/language-release.yml
+      - Cargo.toml
+      - Cargo.lock
+      - src/**
+      - scripts/package-language-release.py
+      - vscode-saml/**
+  push:
+    tags:
+      - saml-language-v*
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: language-release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check release version
+        id: version
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import tomllib
+
+          with open('Cargo.toml', 'rb') as source:
+              version = tomllib.load(source)['package']['version']
+          with open('vscode-saml/package.json', encoding='utf-8') as source:
+              extension_version = json.load(source)['version']
+          if version != extension_version:
+              raise SystemExit(f'Cargo version {version} != VS Code version {extension_version}')
+          if os.environ['GITHUB_REF_TYPE'] == 'tag' and os.environ['GITHUB_REF_NAME'] != f'saml-language-v{version}':
+              raise SystemExit(f'tag must be saml-language-v{version}')
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
+              print(f'version={version}', file=output)
+          PY
+
+  build:
+    needs: validate
+    name: ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-aarch64
+            runner: macos-15
+            suffix: ""
+          - platform: macos-x86_64
+            runner: macos-15-intel
+            suffix: ""
+          - platform: linux-aarch64
+            runner: ubuntu-24.04-arm
+            suffix: ""
+          - platform: linux-x86_64
+            runner: ubuntu-24.04
+            suffix: ""
+          - platform: windows-x86_64
+            runner: windows-2025
+            suffix: .exe
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.13'
+      - name: Install Rust 1.99
+        if: runner.os != 'Linux'
+        shell: bash
+        run: |
+          rustup toolchain install 1.99.0 --profile minimal
+          rustup default 1.99.0
+      - name: Test and build language tools
+        if: runner.os != 'Linux'
+        shell: bash
+        env:
+          SUFFIX: ${{ matrix.suffix }}
+        run: |
+          cargo test --locked
+          cargo build --locked --release --bin saml-lsp --bin saml-check --bin saml-map
+          mkdir -p stage
+          for tool in saml-lsp saml-check saml-map; do
+            cp "target/release/${tool}${SUFFIX}" "stage/${tool}${SUFFIX}"
+          done
+      - name: Test and build Linux on Debian Bookworm
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/saml-build" stage
+          docker run --rm --user "$(id -u):$(id -g)" \
+            -e HOME=/out -e CARGO_HOME=/out/cargo \
+            -e CARGO_TARGET_DIR=/out/target \
+            -v "$PWD:/src:ro" -v "$RUNNER_TEMP/saml-build:/out" \
+            -v "$PWD/stage:/stage" -w /src \
+            rust:1.99-bookworm sh -c '
+              cargo test --locked &&
+              cargo build --locked --release --bin saml-lsp --bin saml-check --bin saml-map &&
+              cp /out/target/release/saml-lsp /stage/saml-lsp &&
+              cp /out/target/release/saml-check /stage/saml-check &&
+              cp /out/target/release/saml-map /stage/saml-map
+            '
+      - name: Package language tools
+        shell: bash
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          python3 scripts/package-language-release.py \
+            --version "$VERSION" --platform "$PLATFORM" --input stage --output dist
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: language-${{ matrix.platform }}
+          path: dist/
+          if-no-files-found: error
+
+  extension:
+    needs: validate
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+      - name: Package VS Code extension
+        working-directory: vscode-saml
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          mkdir -p ../dist
+          npx --yes @vscode/vsce@4.1.1 package --out "../dist/saml-v${VERSION}.vsix"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: language-vsix
+          path: dist/*.vsix
+          if-no-files-found: error
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/saml-language-v')
+    needs: [validate, build, extension]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          pattern: language-*
+          path: dist
+          merge-multiple: true
+      - name: Create checksums
+        shell: bash
+        run: |
+          cd dist
+          sha256sum saml-language-* saml-v*.vsix > SHA256SUMS.txt
+      - name: Publish GitHub release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" \
+            --verify-tag --title "SAML language $VERSION" \
+            --notes "Includes saml-lsp, saml-check, saml-map, and the VS Code extension. Install guide: https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME/LANGUAGE_SERVER.md"

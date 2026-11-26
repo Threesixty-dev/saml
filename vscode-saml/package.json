@@ -3,7 +3,8 @@
   "displayName": "SAML",
   "description": "Editor support for the SAML modeling language",
   "publisher": "local",
-  "version": "0.2.1",
+  "version": "0.3.8",
+  "repository": "https://github.com/Threesixty-dev/saml.git",
   "engines": { "vscode": "^1.100.0" },
   "main": "./extension.js",
   "activationEvents": ["onLanguage:saml", "onLanguage:saml-spec"],
@@ -32,7 +33,7 @@
         "saml.serverPath": {
           "type": "string",
           "default": "",
-          "description": "Path to the saml-lsp binary. Defaults to target/debug/saml-lsp in the workspace."
+          "description": "Absolute path to saml-lsp. Defaults to the workspace target/debug binary, then PATH."
         }
       }
     }
