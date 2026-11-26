@@ -1,6 +1,7 @@
 # Validation record
 
-Checked on 2026-10-21. Tool downloads, dependencies, mutated alternatives, and
+Initial checks on 2026-10-21; Lean checks added on 2026-10-29.
+Tool downloads, dependencies, mutated alternatives, and
 generated analysis reports were kept outside the repository in temporary
 directories. The supplied model files describe the baseline architecture.
 
@@ -57,3 +58,45 @@ not measured execution times or a proof of schedulability on a target platform.
 - Scope: exchange-file schema validation. A desktop import and a complete
   ArchiMate relationship-conformance check were not run. Requirement fulfillment
   and timing were not analyzed.
+
+## Lean 4
+
+Checked on 2026-10-29:
+
+- Tool: official Lean 4.35.0, macOS ARM64, commit
+  `eb6cafb7290e8bd5f2937522d8d804f58f02bafc`. The temporary toolchain archive's
+  SHA-256 matched the digest published in the official GitHub release metadata.
+- Ran `lake build` from `competitors`, using the checked-in `lean-toolchain` and
+  `lakefile.toml`. Both `ColdStorage` and `ArticlePublication` built successfully
+  with compiler warnings treated as errors. There are no external Lean packages.
+- Cold storage: proved baseline conformance and its 44 ms bound, rejection of a
+  cloud evaluator, rejection of the 164 ms alternative, and conformance with slow
+  telemetry under the modeled nonblocking assumption. A general theorem rejects
+  any architecture whose evaluator is in the cloud.
+- Article publication: proved baseline structural conformance, equivalence of
+  the executable check to the declared constraints, and rejection of missing
+  provider capability, unrelated data, and a failure-gated publication model.
+- Proved by induction that every reachable published state satisfies the
+  article-length policy, and separately that successful evaluation was reachable.
+  Proved publication executions for 150 and exactly 100 letters. At 99 letters,
+  the architecture remains structurally valid, a rejection execution exists,
+  and publication is unreachable.
+
+Temporary copies were compiled with `lean -DwarningAsError=true`:
+
+| Mutation | Observed result |
+| --- | --- |
+| Place the baseline cold-store evaluator in the cloud | Compilation fails at `baseline_valid`; `decide` establishes that conformance is false |
+| Remove the baseline backend's offered Articles API | Compilation fails at `baseline_valid`; `decide` establishes that conformance is false |
+| Add `Step.bypass : Step m .submitted .published` | Compilation fails because the invariant-preservation and predecessor proofs lack a case for the new transition |
+
+Used `#print axioms` for every named theorem and `verifiedBaseline`. None depends
+on `sorryAx` or native evaluation's `Lean.ofReduceBool`. Structural proofs use
+Lean's standard axioms (`propext`, and for the article checks also
+`Classical.choice` and `Quot.sound`). The transition-invariant, reachability,
+publication-safety, and explicit execution proofs have no axiom dependencies.
+
+Scope: proofs about the definitions in these two Lean files. The cold-store
+topology, timing inputs, and nonblocking telemetry are assumptions; the article
+workflow is immutable and sequential. No SAML translation, Rust implementation,
+REST transport, RabbitMQ behavior, or generated application was verified.

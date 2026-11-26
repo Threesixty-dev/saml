@@ -1,6 +1,6 @@
 # Architecture modeling examples
 
-Worked examples of the five approaches discussed for comparison with SAML.
+Worked examples of six approaches for comparison with SAML.
 The focus is their metamodels, constraints, and workflows for answering an
 architecture question. Each directory contains a native model and a walkthrough.
 These are small examples written for this repository, not vendor examples.
@@ -39,6 +39,7 @@ links. Their sum is 44 ms. These are illustrative inputs, not measurements.
 | [Acme/Armani](acme/README.md) | Families, component types, ports, connectors, roles, properties, invariants | Instantiate an architecture style and check design rules | The timing formula and locality rule are authored explicitly for this example |
 | [AADL](aadl/README.md) | Component categories, directed typed ports, connections, flows, timing properties | Instantiate a system and analyze an end-to-end latency budget | Results depend on supplied bounds and the detail of the execution model |
 | [ArchiMate](archimate/README.md) | Goals, requirements, constraints, business/application/technology concepts, typed relationships | Trace a proposed change to requirements and operational responsibilities | A realization relationship records a claim; it does not prove fulfillment |
+| [Lean 4](lean/README.md) | Typed architecture definitions, executable predicates, and proofs | Prove baseline conformance and rejection of cloud/slow alternatives | Guarantees apply to the authored formal model and its assumptions; there is no SAML compiler integration |
 
 The common scenario makes the questions comparable, but the models have different
 scopes. For example, the AADL file models the technical flow, while the ArchiMate
@@ -55,4 +56,4 @@ feature ranking or evidence of adoption.
 Each walkthrough includes primary sources and a validation status. Tool versions
 and checks are recorded in [VALIDATION.md](VALIDATION.md).
 
-For the evolving SAML article-publication sketch, see the [parallel native examples](article-publication/README.md) in ArchiMate, EMF/Epsilon, Refinery, Acme/Armani, AADL, LikeC4, and Structurizr.
+For the evolving SAML article-publication sketch, see the [parallel native examples](article-publication/README.md) in ArchiMate, EMF/Epsilon, Refinery, Acme/Armani, AADL, LikeC4, Structurizr, and Lean.
